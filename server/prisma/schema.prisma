@@ -1,0 +1,146 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// NOTE: In Prisma v7+, connection URLs are configured in prisma.config.ts
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────
+
+enum Role {
+  SELLER
+  CUSTOMER
+}
+
+enum ProductStatus {
+  DRAFT
+  UPCOMING
+  ACTIVE
+  SOLD_OUT
+  TERMINATED
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+// ─────────────────────────────────────────────────────────────
+// Models
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  full_name     String
+  email         String    @unique
+  password_hash String
+  role          Role      @default(CUSTOMER)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  // Relations
+  addresses     Address[]
+  products      Product[]   @relation("SellerProducts")
+  orders        Order[]     @relation("CustomerOrders")
+  favorites     Favorite[]
+
+  @@map("users")
+}
+
+model Address {
+  id             String   @id @default(uuid())
+  user_id        String
+  street_address String
+  city           String
+  state          String
+  zip_code       String
+  is_default     Boolean  @default(false)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  // Relations
+  user           User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  orders         Order[]
+
+  @@map("addresses")
+}
+
+model Product {
+  id               String        @id @default(uuid())
+  seller_id        String
+  name             String
+  description      String        @db.Text
+  image_url        String?
+  original_mrp     Decimal       @db.Decimal(10, 2)
+  discount_price   Decimal       @db.Decimal(10, 2)
+  stock_qty        Int           @default(0)
+  estimated_demand Int           @default(0)
+  status           ProductStatus @default(DRAFT)
+  sale_starts_at   DateTime?
+  created_at       DateTime      @default(now())
+  updated_at       DateTime      @updatedAt
+
+  // Relations
+  seller           User          @relation("SellerProducts", fields: [seller_id], references: [id], onDelete: Cascade)
+  favorites        Favorite[]
+  order_items      OrderItem[]
+
+  @@map("products")
+}
+
+model Favorite {
+  user_id    String
+  product_id String
+  // Phase 2: used to sort users in the Redis priority queue by earliest interest
+  added_at   DateTime @default(now())
+
+  // Relations
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  // Composite primary key
+  @@id([user_id, product_id])
+  @@map("favorites")
+}
+
+model Order {
+  id                  String      @id @default(uuid())
+  customer_id         String
+  shipping_address_id String
+  // Phase 1: holds the locked total; used by the 3-minute payment timer
+  total_amount        Decimal     @db.Decimal(10, 2)
+  status              OrderStatus @default(PENDING)
+  created_at          DateTime    @default(now())
+  updated_at          DateTime    @updatedAt
+
+  // Relations
+  customer            User        @relation("CustomerOrders", fields: [customer_id], references: [id], onDelete: Cascade)
+  shipping_address    Address     @relation(fields: [shipping_address_id], references: [id])
+  items               OrderItem[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id           String   @id @default(uuid())
+  order_id     String
+  product_id   String
+  quantity     Int      @default(1)
+  // Snapshot of price at purchase time — immutable; Phase 2 integrity anchor
+  locked_price Decimal  @db.Decimal(10, 2)
+  created_at   DateTime @default(now())
+
+  // Relations
+  order        Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  product      Product  @relation(fields: [product_id], references: [id])
+
+  @@map("order_items")
+}
