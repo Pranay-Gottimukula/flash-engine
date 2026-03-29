@@ -42,6 +42,14 @@ export const orderService = {
       throw createError(400, "SOLD_OUT");
     }
 
+    if (
+      product.status === "UPCOMING" &&
+      product.sale_starts_at &&
+      new Date(product.sale_starts_at).getTime() > Date.now()
+    ) {
+      throw createError(400, "Sale has not started yet");
+    }
+
     if (product.stock_qty < data.quantity) {
       throw createError(400, "SOLD_OUT");
     }

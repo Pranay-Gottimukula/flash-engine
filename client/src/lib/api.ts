@@ -1,5 +1,15 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
+async function handleError(res: Response, fallback: string) {
+  const errorData = await res.json().catch(() => ({ message: fallback }));
+  let msg = errorData.message || `HTTP ${res.status}`;
+  if (errorData.errors && Array.isArray(errorData.errors)) {
+    const details = errorData.errors.map((e: any) => e.message).join(" • ");
+    if (details) msg += `, ${details}`;
+  }
+  throw new Error(msg);
+}
+
 interface RequestOptions extends Omit<RequestInit, "body"> {
   body?: unknown;
 }
@@ -21,8 +31,7 @@ async function request<T>(
   });
 
   if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ message: "Request failed" }));
-    throw new Error(errorData.message || `HTTP ${res.status}`);
+    await handleError(res, "Request failed");
   }
 
   // 204 No Content
@@ -41,8 +50,7 @@ async function upload<T>(endpoint: string, formData: FormData): Promise<T> {
   });
 
   if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ message: "Upload failed" }));
-    throw new Error(errorData.message || `HTTP ${res.status}`);
+    await handleError(res, "Upload failed");
   }
 
   return res.json();
@@ -56,8 +64,7 @@ async function uploadPatch<T>(endpoint: string, formData: FormData): Promise<T> 
   });
 
   if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ message: "Update failed" }));
-    throw new Error(errorData.message || `HTTP ${res.status}`);
+    await handleError(res, "Update failed");
   }
 
   return res.json();

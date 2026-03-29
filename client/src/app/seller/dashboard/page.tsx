@@ -19,7 +19,7 @@ import {
   Eye,
 } from "lucide-react";
 
-function StatusBadge({ status }: { status: Product["status"] }) {
+function StatusBadge({ displayStatus }: { displayStatus: string }) {
   const map: Record<string, string> = {
     ACTIVE: "badge-active",
     UPCOMING: "badge-upcoming",
@@ -27,7 +27,7 @@ function StatusBadge({ status }: { status: Product["status"] }) {
     DRAFT: "badge-draft",
     TERMINATED: "badge-terminated",
   };
-  return <span className={`badge ${map[status] || "badge-draft"}`}>{status.replace("_", " ")}</span>;
+  return <span className={`badge ${map[displayStatus] || "badge-draft"}`}>{displayStatus.replace("_", " ")}</span>;
 }
 
 export default function SellerDashboard() {
@@ -50,6 +50,22 @@ export default function SellerDashboard() {
     }
   }, [user]);
 
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const hasPending = products.some(p => p.status === "UPCOMING" && p.sale_starts_at && new Date(p.sale_starts_at).getTime() > Date.now());
+    if (!hasPending) return;
+    
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [products]);
+
+  const getDisplayStatus = (p: Product) => {
+    if (p.status === "UPCOMING" && p.sale_starts_at && new Date(p.sale_starts_at).getTime() <= now) {
+      return "ACTIVE";
+    }
+    return p.status;
+  };
+
   const handleTerminate = async (id: string) => {
     if (!confirm("Are you sure? This will immediately terminate the sale.")) return;
     setTerminating(id);
@@ -65,8 +81,8 @@ export default function SellerDashboard() {
 
   // Analytics
   const totalOrders = products.reduce((a, p) => a + (p._count?.order_items ?? 0), 0);
-  const activeCount = products.filter((p) => p.status === "ACTIVE").length;
-  const upcomingCount = products.filter((p) => p.status === "UPCOMING").length;
+  const activeCount = products.filter((p) => getDisplayStatus(p) === "ACTIVE").length;
+  const upcomingCount = products.filter((p) => getDisplayStatus(p) === "UPCOMING").length;
   const revenue = products.reduce((a, p) => a + Number(p.discount_price) * (p._count?.order_items ?? 0), 0);
 
   if (loading || fetching) {
@@ -238,7 +254,7 @@ export default function SellerDashboard() {
 
                       {/* Status */}
                       <td style={{ padding: "1rem 1.5rem" }}>
-                        <StatusBadge status={product.status} />
+                        <StatusBadge displayStatus={getDisplayStatus(product)} />
                       </td>
 
                       {/* Actions */}

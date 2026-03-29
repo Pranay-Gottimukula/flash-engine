@@ -8,15 +8,23 @@ import { api } from "@/lib/api";
 import { Product, Favorite } from "@/types";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import { Heart, Zap, Clock, ShoppingBag, Search, Filter } from "lucide-react";
+import { Heart, Zap, Clock, ShoppingBag, Search, Filter, XCircle } from "lucide-react";
 
-function CountdownTimer({ target }: { target: string }) {
+function CountdownTimer({ target, onLive }: { target: string; onLive: () => void }) {
   const [timeLeft, setTimeLeft] = useState("");
 
   useEffect(() => {
+    let triggered = false;
     const tick = () => {
       const diff = new Date(target).getTime() - Date.now();
-      if (diff <= 0) { setTimeLeft("Live now!"); return; }
+      if (diff <= 0) {
+        setTimeLeft("Live now!");
+        if (!triggered) {
+          triggered = true;
+          onLive();
+        }
+        return;
+      }
       const h = Math.floor(diff / 3600000);
       const m = Math.floor((diff % 3600000) / 60000);
       const s = Math.floor((diff % 60000) / 1000);
@@ -25,7 +33,7 @@ function CountdownTimer({ target }: { target: string }) {
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [target]);
+  }, [target, onLive]);
 
   return (
     <span style={{ fontSize: "0.75rem", color: "#818cf8", fontWeight: 600 }}>
@@ -48,6 +56,16 @@ function ProductCard({
   const discount = Math.round(
     (1 - Number(product.discount_price) / Number(product.original_mrp)) * 100
   );
+
+  const [isLive, setIsLive] = useState(() => {
+    if (product.status === "ACTIVE") return true;
+    if (product.status === "UPCOMING" && product.sale_starts_at) {
+      if (new Date(product.sale_starts_at).getTime() <= Date.now()) return true;
+    }
+    return false;
+  });
+
+  const displayStatus = product.status === "SOLD_OUT" ? "SOLD OUT" : (isLive ? "ACTIVE" : product.status);
 
   return (
     <motion.div
@@ -79,8 +97,8 @@ function ProductCard({
 
         {/* Status badge */}
         <div style={{ position: "absolute", top: "0.75rem", right: "0.75rem" }}>
-          <span className={`badge ${product.status === "ACTIVE" ? "badge-active" : "badge-upcoming"}`}>
-            {product.status}
+          <span className={`badge ${displayStatus === "ACTIVE" ? "badge-active" : "badge-upcoming"}`}>
+            {displayStatus}
           </span>
         </div>
 
@@ -130,19 +148,21 @@ function ProductCard({
             <div style={{ fontSize: "0.75rem", color: "var(--foreground-muted)" }}>
               {product.stock_qty} left
             </div>
-            {product.sale_starts_at && product.status === "UPCOMING" && (
-              <CountdownTimer target={product.sale_starts_at} />
+            {product.sale_starts_at && product.status === "UPCOMING" && !isLive && (
+              <CountdownTimer target={product.sale_starts_at} onLive={() => setIsLive(true)} />
             )}
           </div>
         </div>
 
-        <Link href={`/checkout/${product.id}`} style={{ textDecoration: "none", marginTop: "0.5rem" }}>
+        <Link href={`/checkout/${product.id}`} style={{ textDecoration: "none", marginTop: "0.5rem" }} onClick={(e) => { if (!isLive || product.status === "SOLD_OUT") e.preventDefault(); }}>
           <button
-            className={product.status === "ACTIVE" ? "btn-primary" : "btn-ghost"}
-            disabled={product.status !== "ACTIVE"}
+            className={isLive && product.status !== "SOLD_OUT" ? "btn-primary" : "btn-ghost"}
+            disabled={!isLive || product.status === "SOLD_OUT"}
             style={{ width: "100%", justifyContent: "center" }}
           >
-            {product.status === "ACTIVE" ? (
+            {product.status === "SOLD_OUT" ? (
+              <><XCircle size={14} /> Sold Out</>
+            ) : isLive ? (
               <><Zap size={14} fill="white" /> Buy Now</>
             ) : (
               <><Clock size={14} /> Upcoming</>
@@ -195,8 +215,24 @@ export default function BrowsePage() {
     []
   );
 
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const hasPending = products.some(p => p.status === "UPCOMING" && p.sale_starts_at && new Date(p.sale_starts_at).getTime() > Date.now());
+    if (!hasPending) return;
+    
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [products]);
+
+  const getDisplayStatus = (p: Product) => {
+    if (p.status === "UPCOMING" && p.sale_starts_at && new Date(p.sale_starts_at).getTime() <= now) {
+      return "ACTIVE";
+    }
+    return p.status;
+  };
+
   const filtered = products
-    .filter((p) => filter === "ALL" || p.status === filter)
+    .filter((p) => filter === "ALL" || getDisplayStatus(p) === filter)
     .filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
 
   if (loading || fetching) {

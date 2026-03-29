@@ -317,12 +317,18 @@ export default function CheckoutPage() {
 
   const handleQueueDone = useCallback(() => {
     if (!product) return;
+    
+    const isLive = product.status === "ACTIVE" || 
+      (product.status === "UPCOMING" && (!product.sale_starts_at || new Date(product.sale_starts_at).getTime() <= Date.now()));
+
     if (product.stock_qty <= 0 || product.status === "SOLD_OUT") {
       setStage("sold_out");
+    } else if (!isLive) {
+      router.push("/browse");
     } else {
       setStage("select_address");
     }
-  }, [product]);
+  }, [product, router]);
 
   const handleProceedToConfirm = () => {
     if (!selectedAddressId) return;
