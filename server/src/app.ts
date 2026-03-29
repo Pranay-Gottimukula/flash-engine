@@ -3,6 +3,8 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 
+dotenv.config();
+
 import { errorHandler } from "./middlewares/error.middleware";
 import authRoutes from "./routes/auth.routes";
 import productRoutes from "./routes/product.routes";
@@ -10,7 +12,6 @@ import addressRoutes from "./routes/address.routes";
 import favoriteRoutes from "./routes/favorite.routes";
 import orderRoutes from "./routes/order.routes";
 
-dotenv.config();
 
 const app: Application = express();
 const PORT = process.env.PORT || 5000;
@@ -55,6 +56,10 @@ app.use("/api/orders", orderRoutes);
 
 // ── Global Error Handler ──────────────────────────────────────
 app.use(errorHandler);
+
+// setInterval(() => {
+//   console.log("Heartbeat: Server is still alive");
+// }, 5000);
 
 // ── Start ─────────────────────────────────────────────────────
 app.listen(PORT, () => {

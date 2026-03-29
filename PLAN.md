@@ -6,6 +6,16 @@
 
 ## 🏗️ Core Architecture
 
+**Stack (explicit):**
+
+- **Node.js 22** — runtime
+- **pnpm** — package manager (`/server` and `/client`)
+- **Express.js** — HTTP API (TypeScript)
+- **Prisma 7** — ORM with the standard **`@prisma/adapter-pg`** PostgreSQL adapter
+- **PostgreSQL** — primary database
+- **Next.js** (App Router) + **Tailwind CSS** — frontend
+- Supporting: **Zod** (validation), **JWT + bcrypt** (auth), **Cloudinary** (images)
+
 | Layer | Technology | Notes |
 |---|---|---|
 | **Runtime** | Node.js 22 (v22.22.0) | LTS, confirmed |
@@ -24,6 +34,10 @@
 routes/ → controllers/ → services/ → repositories/ → prisma (DB)
 ```
 
+### How we keep this plan current
+
+After each **completed feature** or **major architecture decision**, update this file in the same session: adjust **Feature Roadmap** checkboxes (`[ ]` / `[x]`), refresh **Current Status** (what is in progress, blocked, or verified), and bump **Last updated** with the date. That way the project never loses its place.
+
 ### Environment Variables (server/.env)
 | Variable | Purpose |
 |---|---|
@@ -40,12 +54,14 @@ routes/ → controllers/ → services/ → repositories/ → prisma (DB)
 
 ## 📋 Feature Roadmap
 
+Phase 1 work is grouped below as **(1) Auth & users**, **(2) Seller dashboard**, **(3) Customer dashboard**, **(4) Buy Now checkout** (plus shared design system). Setup and infrastructure are listed first.
+
 ### 🔧 Setup & Infrastructure
 
 - [x] Initialize Express backend with TypeScript
 - [x] Configure `tsconfig.json`
 - [x] Set up Prisma 7 with `@prisma/adapter-pg`
-- [x] Write `primsma.config.ts` (Prisma v7 style — no URLs in `schema.prisma`)
+- [x] Write `prisma.config.ts` (Prisma v7 style — no URLs in `schema.prisma`)
 - [x] Write full database schema (`User`, `Address`, `Product`, `Favorite`, `Order`, `OrderItem`)
 - [x] Configure CORS, cookie-parser, body-parsing middleware
 - [x] Set up global error handler middleware
@@ -62,7 +78,7 @@ routes/ → controllers/ → services/ → repositories/ → prisma (DB)
 
 ---
 
-### 🔐 Feature 1 — Authentication & Users
+### 🔐 (1) Authentication & Users
 
 **Backend**
 - [x] `POST /api/auth/register` — create user, hash password with bcrypt
@@ -77,7 +93,7 @@ routes/ → controllers/ → services/ → repositories/ → prisma (DB)
 
 ---
 
-### 🛍️ Feature 2 — Seller Dashboard
+### 🛍️ (2) Seller Dashboard
 
 **Backend**
 - [x] `GET /api/products/my` — seller's own products
@@ -94,7 +110,7 @@ routes/ → controllers/ → services/ → repositories/ → prisma (DB)
 
 ---
 
-### 👤 Feature 3 — Customer Dashboard
+### 👤 (3) Customer Dashboard
 
 **Backend**
 - [x] `GET /api/addresses` — list addresses
@@ -117,7 +133,7 @@ routes/ → controllers/ → services/ → repositories/ → prisma (DB)
 
 ---
 
-### 🛒 Feature 4 — Phase 1 "Buy Now" Checkout Flow
+### 🛒 (4) Phase 1 "Buy Now" Checkout Flow
 
 **Backend**
 - [x] `POST /api/orders` — create PENDING order, atomically decrement `stock_qty`
@@ -126,15 +142,16 @@ routes/ → controllers/ → services/ → repositories/ → prisma (DB)
 - [x] Transaction logic: check stock → decrement → create order (atomic)
 
 **Frontend**
-- [x] `/checkout/[productId]` — "Waiting in Queue..." loading screen (3s setTimeout)
-- [ ] Address selection UI on checkout page ← _wiring needed_
-- [ ] "Confirm Payment" screen with 3-minute countdown timer
-- [ ] Sold Out redirect with message
-- [ ] Success screen after payment
+- [x] `/checkout/[productId]` — Stage 1: "Waiting in Queue" (3s animated progress bar + bouncing dots)
+- [x] Stage 2: "Sold Out" screen (if stock = 0 after queue)
+- [x] Stage 3: Address selector (radio-style cards) + "Continue to Payment" button
+- [x] Stage 4: "Confirm Payment" screen with 3-minute countdown timer, pulse glow, order summary
+- [x] Stage 5: Animated success screen (spring animation, order summary card)
+- [x] All 5 stages wired — Framer Motion `AnimatePresence` transitions between stages
 
 ---
 
-### 🎨 Design System
+### 🎨 Shared design system (cross-cutting)
 
 - [x] Dark-themed CSS design tokens (CSS Variables in `globals.css`)
 - [x] Glass card effect (`.glass` utility class)
@@ -148,28 +165,30 @@ routes/ → controllers/ → services/ → repositories/ → prisma (DB)
 
 ## 🚧 Current Status
 
-**Last updated:** 2026-03-29
+**Last updated:** 2026-03-29 — PLAN refresh + Phase 1 verification pass
 
-### ✅ Done
-- Full backend Service-Repository architecture across ALL 5 entities (auth, products, addresses, favorites, orders)
-- All API routes registered + middleware (CORS, auth, upload, error handler)
-- Prisma schema with Phase 2-aware fields (`added_at`, `sale_starts_at`, `locked_price`)
-- **First DB migration applied**: `init_flash_sale_schema` — all 6 tables live in NeonDB
-- Cloudinary + Multer image upload pipeline (stream buffer, no disk)
-- JWT auth via httpOnly cookies (register, login, logout, me)
-- All frontend pages complete: login, register, browse, seller dashboard + analytics, checkout (queue → address → countdown → pay → success), profile + addresses, favorites, orders
-- Seller product **edit page** added (`/seller/products/[id]/edit`) — PATCH + live discount calculator + image replace
-- `client/.env.local` created (`NEXT_PUBLIC_API_URL`)
-- Dark-themed glassmorphism design system with full CSS token system
-- Smoke-tested: register, login, health check all returning ✅
+**What we are working on now:** confirming Phase 1 with automated checks (`tsc`, Prisma validate) and environment readiness—not building new Phase 1 features until something fails verification or you expand scope.
 
-### 🟡 Remaining Polish / Testing
-1. **End-to-end flow test** — register → login → browse → buy-now → checkout → order
-2. **Responsive design** — verify mobile layouts on smaller screens
-3. **Error boundary** — add catch-all error UI for unhandled Next.js errors
+### ✅ Roadmap reality (Phase 1 build)
 
-### 🟢 Phase 1 is FEATURE COMPLETE
-All backend endpoints, frontend pages, DB migration, and image upload pipeline are production-ready for Phase 1 scope.
+- All items under **Setup**, **(1)–(4)**, and **Shared design system** above are marked **[x]** in this file; implementation lives in `/server` and `/client`.
+- Active Prisma schema: [`server/prisma/schema.prisma`](server/prisma/schema.prisma) (Phase 2-oriented fields preserved: `favorites.added_at`, `products.sale_starts_at`, `orders.status` PENDING, `order_items.locked_price`, `stock_qty`).
+- Architecture: Service-Repository pattern; JWT + bcrypt; Cloudinary + Multer on the backend; Next.js App Router + Tailwind + shadcn/Radix + Lucide on the client.
+
+### 🔴 Verify before calling it “done” in your environment
+
+1. **`server/.env`** — `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `ALLOWED_ORIGINS`, and **Cloudinary** vars (uploads fail without Cloudinary credentials).
+2. **`client/.env.local`** — `NEXT_PUBLIC_API_URL` (e.g. `http://localhost:5000`) must match the API origin.
+3. **Automated checks** — run `pnpm exec tsc --noEmit` in `/server` and `/client`; run Prisma validate/generate from `/server` as needed after schema changes. *(Latest run: 2026-03-29 — `tsc` clean on both packages; `prisma validate` OK.)*
+4. **Manual smoke** — register → login → browse → Buy Now → full checkout (queue, stock check, address, 3-minute timer, pay, success).
+
+### 🟡 Polish backlog (optional, not blocking Phase 1 scope)
+
+- Responsive passes on small screens; Next.js error boundary / friendlier unhandled errors.
+
+### 🟢 Phase 1 scope
+
+Foundational CRUD + Buy Now flow only—**no** Redis, BullMQ, or queue infrastructure (see Phase 2 preview below).
 
 ---
 
