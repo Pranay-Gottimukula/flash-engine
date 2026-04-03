@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { authService, registerSchema, loginSchema } from "../services/auth.service";
+import { authService, registerSchema, loginSchema, changePasswordSchema } from "../services/auth.service";
 import { userRepository } from "../repositories/user.repository";
 
 const COOKIE_OPTIONS = {

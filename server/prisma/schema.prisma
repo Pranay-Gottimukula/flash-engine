@@ -42,7 +42,7 @@ model Product {
   seller_id        String          @db.Uuid
   name             String          @db.VarChar(255)
   description      String
-  image_url        String?         @db.VarChar(1024)
+  image_urls       String[]
   original_mrp     Decimal         @db.Decimal(10, 2)
   discount_price   Decimal         @db.Decimal(10, 2)
   stock_qty        Int             @default(0)

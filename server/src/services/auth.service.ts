@@ -16,6 +16,11 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
+export const changePasswordSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  newPassword: z.string().min(8, "Password must be at least 8 characters"),
+});
+
 export const authService = {
   register: async (input: z.infer<typeof registerSchema>) => {
     const existing = await userRepository.findByEmail(input.email);
@@ -55,5 +60,15 @@ export const authService = {
         role: user.role,
       },
     };
+  },
+
+  changePassword: async (input: z.infer<typeof changePasswordSchema>) => {
+    const user = await userRepository.findByEmail(input.email);
+    if (!user) throw createError(404, "No account found with that email address");
+
+    const password_hash = await bcrypt.hash(input.newPassword, 12);
+    await userRepository.updatePasswordByEmail(input.email, password_hash);
+
+    return { message: "Password updated successfully" };
   },
 };

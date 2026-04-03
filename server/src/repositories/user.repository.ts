@@ -25,4 +25,11 @@ export const userRepository = {
       data,
       select: { id: true, email: true, full_name: true, role: true },
     }),
+
+  updatePasswordByEmail: (email: string, password_hash: string) =>
+    prisma.user.update({
+      where: { email },
+      data: { password_hash },
+      select: { id: true, email: true, full_name: true, role: true },
+    }),
 };
