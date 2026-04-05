@@ -11,3 +11,70 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// The company/developer who signed up for your SaaS
+model Client {
+  id        String      @id @default(cuid())
+  email     String      @unique
+  publicKey String      @unique   // pk_live_...  safe to expose
+  secretKey String                // sk_live_...  never leaves the server
+  createdAt DateTime    @default(now())
+
+  events    SaleEvent[]
+}
+
+// One flash sale event — a Client can run many over time
+model SaleEvent {
+  id         String   @id @default(cuid())
+  clientId   String
+  name       String
+  stockCount Int
+  rateLimit  Int      @default(50)  // winners per second
+  status     String   @default("PENDING") // PENDING | ACTIVE | ENDED
+  createdAt  DateTime @default(now())
+
+  client    Client          @relation(fields: [clientId], references: [id])
+  attempts  QueueAttempt[]
+  releases  TicketRelease[]
+  usedJtis  UsedJti[]
+}
+
+// Every join attempt logged — WON, LOST, or RATE_LIMITED
+// Gives you analytics: how many people tried, how many won, drop-off rate
+model QueueAttempt {
+  id          String   @id @default(cuid())
+  saleEventId String
+  userId      String   // whatever the client passes as the user identifier
+  result      String   // WON | LOST | RATE_LIMITED | SOLD_OUT
+  jti         String?  // only populated if result = WON
+  createdAt   DateTime @default(now())
+
+  saleEvent   SaleEvent @relation(fields: [saleEventId], references: [id])
+
+  @@index([saleEventId])  // you'll query this a lot for dashboards
+  @@index([saleEventId, result])
+}
+
+// Audit log of every stock release (expired ticket, user cancelled)
+model TicketRelease {
+  id          String   @id @default(cuid())
+  saleEventId String
+  jti         String   // which ticket was returned
+  reason      String   // EXPIRED | CANCELLED | PAYMENT_FAILED
+  releasedAt  DateTime @default(now())
+
+  saleEvent   SaleEvent @relation(fields: [saleEventId], references: [id])
+}
+
+// Engine-side double-spend shield
+// When a client's backend verifies a JWT, they can optionally call your
+// /api/verify endpoint which writes the jti here — prevents replay even
+// if the client forgets to add @unique on their own side
+model UsedJti {
+  jti         String   @id   // the UUID from the JWT — PK guarantees uniqueness
+  saleEventId String
+  usedAt      DateTime @default(now())
+  expiresAt   DateTime        // store this so you can clean up expired rows later
+
+  saleEvent   SaleEvent @relation(fields: [saleEventId], references: [id])
+}
