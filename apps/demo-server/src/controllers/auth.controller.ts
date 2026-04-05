@@ -54,4 +54,14 @@ export const authController = {
       next(err);
     }
   },
+
+  changePassword: async (req: Request, res: Response, next: NextFunction) => {
+    try{
+      const data = changePasswordSchema.parse(req.body);
+      await authService.changePassword(data);
+      res.json({ message: "Password changed successfully" });
+    }catch(err){
+      next(err);
+    }
+  }
 };

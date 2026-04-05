@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Zap, Mail, Lock, User, ArrowRight, Eye, EyeOff } from "lucide-react";
+import { api } from "@/lib/api";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -14,15 +15,28 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPass, setShowPass] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [successMsg, setSuccessMsg] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSuccessMsg("");
     setLoading(true);
     try {
-      await login(form.email, form.password);
+      if (isChangingPassword) {
+        await api.patch<{ message: string }>("/api/auth/change-password", {
+          email: form.email,
+          newPassword: form.password,
+        });
+        setSuccessMsg("Password changed successfully. You can now sign in.");
+        setIsChangingPassword(false);
+        setForm(p => ({ ...p, password: "" }));
+      } else {
+        await login(form.email, form.password);
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      setError(err instanceof Error ? err.message : "Request failed");
     } finally {
       setLoading(false);
     }
@@ -84,10 +98,10 @@ export default function LoginPage() {
             className="gradient-text"
             style={{ fontSize: "1.75rem", fontWeight: 800, marginBottom: "0.5rem" }}
           >
-            Welcome back
+            {isChangingPassword ? "Change Password" : "Welcome back"}
           </h1>
           <p style={{ color: "var(--foreground-muted)", fontSize: "0.9rem" }}>
-            Sign in to your account to continue
+            {isChangingPassword ? "Enter your email and new password" : "Sign in to your account to continue"}
           </p>
         </div>
 
@@ -118,6 +132,24 @@ export default function LoginPage() {
               </motion.div>
             )}
 
+            {successMsg && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{
+                  background: "rgba(16, 185, 129, 0.1)",
+                  border: "1px solid rgba(16, 185, 129, 0.3)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "0.75rem 1rem",
+                  color: "#10b981",
+                  fontSize: "0.875rem",
+                  textAlign: "center",
+                }}
+              >
+                {successMsg}
+              </motion.div>
+            )}
+
             <div>
               <label className="label">
                 <Mail size={13} style={{ display: "inline", marginRight: 5 }} />
@@ -136,7 +168,7 @@ export default function LoginPage() {
             <div>
               <label className="label">
                 <Lock size={13} style={{ display: "inline", marginRight: 5 }} />
-                Password
+                {isChangingPassword ? "New Password" : "Password"}
               </label>
               <div style={{ position: "relative" }}>
                 <input
@@ -178,11 +210,11 @@ export default function LoginPage() {
               {loading ? (
                 <>
                   <div className="spinner" style={{ width: 16, height: 16 }} />
-                  Signing in...
+                  {isChangingPassword ? "Changing..." : "Signing in..."}
                 </>
               ) : (
                 <>
-                  Sign In
+                  {isChangingPassword ? "Change Password" : "Sign In"}
                   <ArrowRight size={16} />
                 </>
               )}
@@ -191,6 +223,29 @@ export default function LoginPage() {
 
           <div style={{ marginTop: "1.5rem", textAlign: "center" }}>
             <hr className="divider" style={{ marginBottom: "1.25rem" }} />
+            <p style={{ color: "var(--foreground-muted)", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsChangingPassword(!isChangingPassword);
+                  setError("");
+                  setSuccessMsg("");
+                  setForm({ email: "", password: "" });
+                }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--accent)",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  padding: 0,
+                  fontFamily: "inherit",
+                  fontSize: "inherit"
+                }}
+              >
+                {isChangingPassword ? "Back to Login" : "Forgot Password?"}
+              </button>
+            </p>
             <p style={{ color: "var(--foreground-muted)", fontSize: "0.875rem" }}>
               Don&apos;t have an account?{" "}
               <Link
