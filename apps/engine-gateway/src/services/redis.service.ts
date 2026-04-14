@@ -27,6 +27,8 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import Redis from 'ioredis';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 // ── Environment ───────────────────────────────────────────────────────────────
 
@@ -40,32 +42,65 @@ const REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6379';
 
 // ── Connection ────────────────────────────────────────────────────────────────
 
-const redis = new Redis(REDIS_URL, {
-  // Exponential back-off: 200 ms, 400 ms, 800 ms … capped at 30 s.
-  // This prevents thundering-herd reconnects if Redis restarts.
+// const redis = new Redis(REDIS_URL, {
+//   // Exponential back-off: 200 ms, 400 ms, 800 ms … capped at 30 s.
+//   // This prevents thundering-herd reconnects if Redis restarts.
+//   retryStrategy: (times: number) => Math.min(times * 200, 30_000),
+
+//   // lazyConnect: true means the TCP connection is NOT established until the
+//   // first command is sent (or redis.connect() is called explicitly).
+//   // This lets the Express server start up even if Redis isn't ready yet,
+//   // and your health-check route can report degraded status gracefully.
+//   lazyConnect: true,
+
+//   // TODO: For TLS (rediss://), add:
+//   tls: { rejectUnauthorized: false },
+
+//   // TODO: For Redis Sentinel (HA failover), replace the URL with:
+//   //   sentinels: [{ host: '...', port: 26379 }],
+//   //   name: 'mymaster',
+// });
+
+const globalForRedis = globalThis as unknown as { redis?: Redis }
+
+const redis = globalForRedis.redis ?? new Redis(REDIS_URL, {
   retryStrategy: (times: number) => Math.min(times * 200, 30_000),
-
-  // lazyConnect: true means the TCP connection is NOT established until the
-  // first command is sent (or redis.connect() is called explicitly).
-  // This lets the Express server start up even if Redis isn't ready yet,
-  // and your health-check route can report degraded status gracefully.
   lazyConnect: true,
-
-  // TODO: For TLS (rediss://), add:
-  //   tls: { rejectUnauthorized: true },
-
-  // TODO: For Redis Sentinel (HA failover), replace the URL with:
-  //   sentinels: [{ host: '...', port: 26379 }],
-  //   name: 'mymaster',
+  tls: { rejectUnauthorized: false },
 });
+
+
 
 // ── Lifecycle events ──────────────────────────────────────────────────────────
 
-redis.on('connect',       () => console.log('✅ Redis connected'));
-redis.on('ready',         () => console.log('✅ Redis ready — registering Lua scripts…'));
-redis.on('error',  (err: Error) => console.error('❌ Redis error:', err.message));
-redis.on('reconnecting',  () => console.warn('⚠️  Redis reconnecting…'));
-redis.on('close',         () => console.warn('⚠️  Redis connection closed'));
+redis.on('connect',      () => console.log('✅ Redis connected'));
+redis.on('ready',        () => console.log('✅ Redis ready — Lua scripts registered'));
+redis.on('error', (err: Error) => console.error('❌ Redis error:', err.message));
+redis.on('reconnecting', () => console.warn('⚠️  Redis reconnecting…'));
+redis.on('close',        () => console.warn('⚠️  Redis connection closed'));
+
+// ── Startup helper ────────────────────────────────────────────────────────────
+//
+// Call this ONCE during server bootstrap (server.ts → bootstrap()).
+// Because lazyConnect: true is set, the TCP handshake to Redis has NOT happened
+// yet when this module is first imported.  Calling connectRedis() fires it
+// explicitly so we can:
+//   a) Fail fast if Redis is unreachable at startup (rather than on the first
+//      real request, which would result in a confusing 500 to an end-user).
+//   b) Guarantee the Lua script (leakyBucket) is registered before any
+//      queue/join request arrives.
+//
+// The outer try/catch in server.ts lets you decide the startup policy:
+//   - Strict:  process.exit(1) if Redis is down (safest for production).
+//   - Lenient: log a warning and continue (acceptable if Redis is non-critical
+//              for some routes, e.g., health checks still need to work).
+
+export async function connectRedis(): Promise<void> {
+  // redis.connect() resolves when the 'ready' event fires (i.e., after the
+  // TCP handshake AND the Redis server has finished loading its dataset).
+  // It rejects if the connection cannot be established within the timeout.
+  await redis.connect();
+}
 
 // ── Lua Script: Leaky Bucket Rate Limiter + Stock Decrement ───────────────────
 //
@@ -128,16 +163,26 @@ redis.on('close',         () => console.warn('⚠️  Redis connection closed'))
 
 // TODO: Uncomment and implement once you have written the Lua script.
 //
-// declare module 'ioredis' {
-//   interface Redis {
-//     leakyBucket(numkeys: number, key: string, nowMs: number): Promise<[number, string]>;
-//   }
-// }
-//
-// redis.defineCommand('leakyBucket', {
-//   numberOfKeys: 1,
-//   lua: LEAKY_BUCKET_LUA,   // import the .lua file or inline the string here
-// });
+
+const LEAKY_BUCKET_LUA = readFileSync(
+  join(__dirname, '../scripts/leaky-bucket.lua'),
+  'utf-8'
+);
+
+declare module 'ioredis' {
+  interface Redis {
+    leakyBucket(
+      numkeys: number, 
+      key: string, 
+      nowMs: number
+    ): Promise<[number, string]>;
+  }
+}
+
+redis.defineCommand('leakyBucket', {
+  numberOfKeys: 1,
+  lua: LEAKY_BUCKET_LUA,   // import the .lua file or inline the string here
+});
 //
 // Call site (in queue.controller.ts):
 //   const [code, reason] = await redis.leakyBucket(1, `flash:event:${publicKey}`, Date.now());

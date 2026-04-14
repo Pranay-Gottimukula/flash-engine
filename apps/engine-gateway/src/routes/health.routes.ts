@@ -31,11 +31,11 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import { Router, Request, Response } from 'express';
-import { PrismaClient }              from '@prisma/client';
+import prisma from '../lib/prisma';
 import redis                          from '../services/redis.service';
 
 const router    = Router();
-const prisma    = new PrismaClient();
+// const prisma    = new PrismaClient();
 //
 // TODO: Import a shared Prisma singleton instead of creating a new instance here.
 //       Multiple PrismaClient instances open multiple connection pools, which
@@ -56,11 +56,26 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
 
   const [redisResult, postgresResult] = checks;
 
+  const redisOk    = redisResult.status    === 'fulfilled';
+  const postgresOk = postgresResult.status === 'fulfilled';
+
   const status = {
-    redis:    redisResult.status    === 'fulfilled' ? 'ok'   : 'error',
-    postgres: postgresResult.status === 'fulfilled' ? 'ok'   : 'error',
-    redisError:    redisResult.status    === 'rejected' ? String(redisResult.reason)    : undefined,
-    postgresError: postgresResult.status === 'rejected' ? String(postgresResult.reason) : undefined,
+    redis:    redisOk ? 'ok' : 'error',
+    postgres: postgresOk ? 'ok' : 'error',
+    latencyMs: {
+      redis:    redisOk
+                  ? (redisResult.value as { latencyMs: number }).latencyMs
+                  : undefined,
+      postgres: postgresOk
+                  ? (postgresResult.value as { latencyMs: number }).latencyMs
+                  : undefined,
+    },
+
+    // Error messages only populated on failure
+    errors: {
+      ...(redisOk    ? {} : { redis:    String((redisResult as PromiseRejectedResult).reason) }),
+      ...(postgresOk ? {} : { postgres: String((postgresResult as PromiseRejectedResult).reason) }),
+    },
   };
 
   const isHealthy = status.redis === 'ok' && status.postgres === 'ok';
@@ -73,6 +88,32 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
   });
 });
 
+
+router.get('/live', (_req: Request, res: Response): void => {
+  res.status(200).json({
+    status:   'alive',
+    timestamp: new Date().toISOString(),
+    pid:       process.pid,
+    uptime:    `${Math.floor(process.uptime())}s`,
+  });
+});
+
+
+router.get('/ready', async (_req: Request, res: Response): Promise<void> => {
+  const [redisResult, postgresResult] = await Promise.allSettled([
+    redisCheck(),
+    postgresCheck(),
+  ]);
+
+  const ready = redisResult.status === 'fulfilled'
+             && postgresResult.status === 'fulfilled';
+
+  res.status(ready ? 200 : 503).json({
+    ready,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // ── Dependency probe helpers ──────────────────────────────────────────────────
 
 /**
@@ -82,9 +123,13 @@ router.get('/', async (_req: Request, res: Response): Promise<void> => {
  *   - That a key from the flash:event:* namespace is readable (warm-up check)
  *   - Memory usage via `redis.info('memory')` to alert on high-watermarks
  */
-async function redisCheck(): Promise<void> {
+async function redisCheck(): Promise<{ latencyMs: number }> {
+  const start = Date.now();
+
   const pong = await redis.ping();
   if (pong !== 'PONG') throw new Error(`Unexpected PING response: ${pong}`);
+
+  return { latencyMs: Date.now() - start };
 }
 
 /**
@@ -96,8 +141,12 @@ async function redisCheck(): Promise<void> {
  * TODO: Replace raw $queryRaw with a Prisma ping helper once available.
  *       Track: https://github.com/prisma/prisma/issues/3545
  */
-async function postgresCheck(): Promise<void> {
+async function postgresCheck(): Promise<{ latencyMs: number }> {
+  const start = Date.now();
+
   await (prisma as any).$queryRaw`SELECT 1`;
+
+  return { latencyMs: Date.now() - start };
   //
   // NOTE: The cast to `any` is a current Prisma limitation — $queryRaw returns
   // unknown[] and TypeScript can't infer the result of `SELECT 1` automatically.

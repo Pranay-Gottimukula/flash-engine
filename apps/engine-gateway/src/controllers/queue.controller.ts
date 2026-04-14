@@ -34,6 +34,7 @@ import { Request, Response } from 'express';
 import jwt                    from 'jsonwebtoken';
 import { v4 as uuidv4 }       from 'uuid';
 import redis                  from '../services/redis.service';
+import prisma from '../lib/prisma';
 
 const JWT_SECRET     = process.env.JWT_SECRET      ?? (() => { throw new Error('JWT_SECRET is not set') })();
 const JWT_EXPIRY_SEC = 15 * 60; // 15 minutes — window for end-user to complete purchase
@@ -58,13 +59,13 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   //
   // TODO: Replace this manual check with a zod schema for type-safety:
   //
-  //   const JoinSchema = z.object({
-  //     publicKey: z.string().startsWith('pk_'),
-  //     userId:    z.string().min(1).max(256),
-  //     payload:   z.record(z.unknown()).optional(),
-  //   });
-  //   const body = JoinSchema.safeParse(req.body);
-  //   if (!body.success) { res.status(400).json(...); return; }
+    // const JoinSchema = z.object({
+    //   publicKey: z.string().startsWith('pk_'),
+    //   userId:    z.string().min(1).max(256),
+    //   payload:   z.record(z.unknown()).optional(),
+    // });
+    // const body = JoinSchema.safeParse(req.body);
+    // if (!body.success) { res.status(400).json(...); return; }
 
   const { publicKey, userId, payload } = req.body as {
     publicKey?: string;

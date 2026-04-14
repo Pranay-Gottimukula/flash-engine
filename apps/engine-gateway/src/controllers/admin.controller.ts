@@ -23,11 +23,11 @@
 
 import { Request, Response } from 'express';
 import crypto                 from 'crypto';
-import { PrismaClient }       from '@prisma/client';
+import prisma from '../lib/prisma';
 import redis                  from '../services/redis.service';
 
 // TODO: Replace with a shared singleton from src/lib/prisma.ts
-const prisma = new PrismaClient();
+// const prisma = new PrismaClient();
 
 // ── POST /api/admin/events ────────────────────────────────────────────────────
 //

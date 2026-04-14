@@ -6,6 +6,7 @@
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["driverAdapters"]
+  // output   = "../node_modules/.prisma/client"
 }
 
 datasource db {
@@ -15,9 +16,7 @@ datasource db {
 // The company/developer who signed up for your SaaS
 model Client {
   id        String      @id @default(cuid())
-  email     String      @unique
-  publicKey String      @unique   // pk_live_...  safe to expose
-  secretKey String                // sk_live_...  never leaves the server
+  email     String      @unique               
   createdAt DateTime    @default(now())
 
   events    SaleEvent[]
@@ -28,6 +27,10 @@ model SaleEvent {
   id         String   @id @default(cuid())
   clientId   String
   name       String
+
+  publicKey String      @unique   
+  secretKey String      @unique   
+
   stockCount Int
   rateLimit  Int      @default(50)  // winners per second
   status     String   @default("PENDING") // PENDING | ACTIVE | ENDED
