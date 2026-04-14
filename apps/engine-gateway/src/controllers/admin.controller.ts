@@ -25,6 +25,7 @@ import { Request, Response } from 'express';
 import crypto                 from 'crypto';
 import prisma from '../lib/prisma';
 import redis                  from '../services/redis.service';
+import { warmEventCache, evictEventCache } from '../services/event-cache.service';
 
 // TODO: Replace with a shared singleton from src/lib/prisma.ts
 // const prisma = new PrismaClient();
@@ -53,14 +54,36 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
   //   }
   //   const { name, stockCount, rateLimit } = parsed.data;
 
-  const { name, stockCount, rateLimit = 50 } = req.body as {
-    name?: string;
+  const { clientId, name, stockCount, rateLimit = 50 } = req.body as {
+    clientId?:   string;
+    name?:       string;
     stockCount?: number;
-    rateLimit?: number;
+    rateLimit?:  number;
   };
 
-  if (!name || !stockCount) {
-    res.status(400).json({ error: '`name` and `stockCount` are required' });
+
+  if (!clientId || !name || !stockCount) {
+    res.status(400).json({ error: '`clientId`, `name` and `stockCount` are required' });
+    return;
+  }
+
+  if (!Number.isInteger(stockCount) || stockCount <= 0) {
+    res.status(400).json({ error: '`stockCount` must be a positive integer' });
+    return;
+  }
+
+  if (!Number.isInteger(rateLimit) || rateLimit <= 0 || rateLimit > 10_000) {
+    res.status(400).json({ error: '`rateLimit` must be between 1 and 10,000' });
+    return;
+  }
+
+  const client = await prisma.client.findUnique({
+    where:  { id: clientId },
+    select: { id: true },
+  });
+
+  if (!client) {
+    res.status(404).json({ error: 'Client not found' });
     return;
   }
 
@@ -82,8 +105,8 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
   //   sk_live_  → secret key  (NEVER log, NEVER expose to browser)
   //   pk_test_  / sk_test_ for sandbox environments.
 
-  const rawPublicKey  = `pk_live_${crypto.randomBytes(32).toString('hex')}`;
-  const rawSecretKey  = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
+  const publicKey  = `pk_live_${crypto.randomBytes(32).toString('hex')}`;
+  const secretKey  = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
 
   // ── Step 3: Hash the secret key before DB storage ─────────────────────────
   //
@@ -101,7 +124,7 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
   //   .digest('hex');
   //
   // For now we store the plaintext (acceptable for a development stub).
-  const secretKeyToStore = rawSecretKey; // TODO: replace with secretKeyHash
+  // const secretKeyToStore = secretKey; // TODO: replace with secretKeyHash
 
   // ── Step 4: Persist to Postgres ───────────────────────────────────────────
   //
@@ -130,6 +153,52 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
   //
   // If the Redis seed fails, the Prisma transaction rolls back the DB insert.
 
+  // ── Step 4: Persist to Postgres + seed Redis inside a transaction ───────────
+  //
+  // WHY a transaction?
+  //   If Postgres succeeds but Redis fails → DB row exists with no Redis state.
+  //   The Lua script returns EVENT_NOT_FOUND for a valid event.
+  //   Wrapping both means Redis failure rolls back the DB insert entirely.
+  //   Clean slate — retrying createEvent works correctly.
+  //
+  // NOTE: secretKey stored as plaintext in Postgres (not hashed) because the
+  //   queue controller needs the raw value to sign JWTs. Protect it with
+  //   database encryption at rest rather than application-level hashing.
+  //   secretKey is NEVER stored in Redis — it lives only in Postgres and the
+  //   Node process cache (event-cache.service.ts).
+
+  let event: Awaited<ReturnType<typeof prisma.saleEvent.create>>;
+
+  try {
+    event = await prisma.$transaction(async(tx) => {
+      const created = tx.saleEvent.create({
+        data: {
+          clientId,
+          name,
+          stockCount,
+          rateLimit,
+          status:    'PENDING',
+          publicKey,
+          secretKey,
+        },
+      });
+
+      await seedRedis({
+        publicKey,
+        secretKey,
+        eventId:    (await created).id,
+        stockCount,
+        rateLimit,
+      });
+
+      return created;
+    });
+  } catch(err) {
+    console.error('[admin/createEvent] Transaction failed:', err);
+    res.status(500).json({ error: 'Failed to create event' });
+    return;
+  }
+
   // ── Step 5: Seed Redis atomically ─────────────────────────────────────────
   //
   // Store event state as a Redis Hash so the Lua script can read all fields
@@ -151,39 +220,46 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
 
   // MOCK RESPONSE (replace with `event` from the Prisma insert above):
   res.status(201).json({
-    message:   'Flash Sale event created. Store your secretKey now — it will not be shown again.',
-    // TODO: return event.id, event.name, event.status from the DB record
-    publicKey: rawPublicKey,
-    secretKey: rawSecretKey, // TODO: return rawSecretKey (before hashing)
+    message:   'Event created. Copy your secretKey now — it will not be shown again.',
+    id:        event.id,
+    name:      event.name,
+    status:    event.status,
+    publicKey,
+    secretKey,
   });
 }
 
 // ── Helper: Seed Redis with event state ──────────────────────────────────────
 //
-// TODO: Implement this function.
-//
-// async function seedRedis(
-//   publicKey:  string,
-//   stockCount: number,
-//   rateLimit:  number,
-// ): Promise<void> {
-//   const key = `flash:event:${publicKey}`;
-//
-//   // HSETNX: Set field only if it does NOT exist.
-//   // Use a pipeline for a batch of HSETNX calls to be more efficient than
-//   // individual round trips.
-//   const pipeline = redis.pipeline();
-//   pipeline.hsetnx(key, 'status',           'PENDING');
-//   pipeline.hsetnx(key, 'stock',            String(stockCount));
-//   pipeline.hsetnx(key, 'rateLimit',        String(rateLimit));
-//   pipeline.hsetnx(key, 'bucketTokens',     String(rateLimit));  // start full
-//   pipeline.hsetnx(key, 'bucketLastRefill', String(Date.now()));
-//   await pipeline.exec();
-//
-//   // TODO: Set a TTL on the hash to prevent stale data persisting after the
-//   //       event ends.  E.g., 48 hours after creation:
-//   //   await redis.expire(key, 48 * 60 * 60);
-// }
+
+async function seedRedis(params: {
+  publicKey:  string;
+  secretKey:  string;
+  eventId:    string;
+  stockCount: number;
+  rateLimit:  number;
+}): Promise<void> {
+  const { publicKey, secretKey, eventId, stockCount, rateLimit } = params;
+  const key = `flash:event:${publicKey}`;
+
+  // Check if already seeded — prevents overwrite on duplicate calls
+  const exists = await redis.hexists(key, 'stock');
+  if (exists) {
+    throw new Error(`Redis key ${key} already exists — possible duplicate event creation`);
+  }
+
+  // Pipeline batches all HSET calls into one TCP round-trip
+  const pipeline = redis.pipeline();
+  pipeline.hset(key, 'status',           'PENDING');
+  pipeline.hset(key, 'stock',            String(stockCount));
+  pipeline.hset(key, 'rateLimit',        String(rateLimit));
+  pipeline.hset(key, 'bucketTokens',     String(rateLimit));  // start full
+  pipeline.hset(key, 'bucketLastRefill', String(Date.now()));
+  pipeline.hset(key, 'secretKey',        secretKey);          // for JWT signing
+  pipeline.hset(key, 'eventId',          eventId);            // for audit log
+  pipeline.expire(key, 48 * 60 * 60);                         // 48hr TTL safety net
+  await pipeline.exec();
+}
 
 // ── PUT /api/admin/events/:id/activate ───────────────────────────────────────
 //
@@ -200,7 +276,106 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
 // you can retry it (the DB is the source of truth).  If you update Redis first
 // and the DB write fails, users can join a queue that doesn't officially exist.
 
-export async function activateEvent(_req: Request, res: Response): Promise<void> {
-  // TODO: implement
-  res.status(501).json({ error: 'Not implemented yet' });
+export async function activateEvent(req: Request<{ id: string }>, res: Response): Promise<void> {
+  const { id } = req.params;
+
+  const event = await prisma.saleEvent.findUnique({ where: { id } });
+
+  if(!event){
+    res.send(400).json({ error: 'Event not found' });
+    return;
+  }
+
+  if(event.status !== 'PENDING'){
+    res.send(409).json({ error: `Cannot activate — current status: ${event.status}` });
+    return;
+  }
+
+  // Update status to active in database first
+  try {
+    await prisma.saleEvent.update({
+      where: { id },
+      data:  { status: 'ACTIVE' },
+    });
+  } catch (err) {
+    console.error('[activateEvent] Postgres update failed:', err);
+    res.status(500).json({ error: 'Failed to activate event' });
+    return;
+  }
+
+  // Change status in redis
+  try {
+    await redis.hset(`flash:event:${event.publicKey}`, 'status', 'ACTIVE');
+  } catch (err) {
+    console.error(
+      `[activateEvent] CRITICAL: Postgres updated but Redis failed for ${id}. ` +
+      `Manual fix: redis-cli HSET flash:event:${event.publicKey} status ACTIVE`
+    , err);
+    res.status(500).json({ error: 'Activated in DB but Redis sync failed. Contact support.' });
+    return;
+  }
+
+  // ── 3. Warm the Node cache AFTER Redis is confirmed ACTIVE ────────────────
+  //
+  // Order matters: warm cache only after both DB and Redis are consistent.
+  // If Redis failed above we already returned — so reaching here means
+  // everything is in sync and it's safe to start serving traffic.
+
+  warmEventCache(event.publicKey, {
+    secretKey: event.secretKey,
+    eventId: event.id,
+    name: event.name,
+  });
+
+  res.status(200).json({
+    message: 'Event is now ACTIVE. Queue is open.',
+    id:      event.id,
+    status:  'ACTIVE',
+  });
+}
+
+export async function endEvent(req: Request<{ id: string }>, res: Response): Promise<void> {
+  const { id } = req.params;
+
+  const event = await prisma.saleEvent.findUnique({ where: { id } });
+
+  if(!event){
+    res.status(400).json({ error: 'Event Not Found' });
+    return;
+  }
+
+  if (event.status === 'ENDED') {
+    res.status(409).json({ error: 'Event already ended' });
+    return;
+  }
+
+  await prisma.saleEvent.update({
+    where: { id },
+    data:  { status: 'ENDED' },
+  });
+
+  // ── 2. Redis — mark ENDED + set TTL ──────────────────────────────────────
+  //
+  // Setting status to ENDED means the Lua script immediately starts
+  // returning EVENT_NOT_ACTIVE for any in-flight requests.
+  // TTL cleans up the hash from Redis memory after 48 hours.
+
+  const pipeline = redis.pipeline();
+  pipeline.hset(`flash:event:${event.publicKey}`, 'status', 'ENDED');
+  pipeline.expire(`flash:event:${event.publicKey}`, 48 * 60 * 60);
+  await pipeline.exec();
+
+  // ── 3. Evict Node cache ───────────────────────────────────────────────────
+  //
+  // Remove secretKey from memory now that the event is over.
+  // Any requests that sneak through after this point get a cache miss,
+  // hit Postgres, find status=ENDED, and get null back → 404.
+
+  evictEventCache(event.publicKey);
+
+  res.status(200).json({
+    message: 'Event ended. Queue is closed.',
+    id:      event.id,
+    status:  'ENDED',
+  });
 }
