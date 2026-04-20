@@ -293,7 +293,132 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
 //   submitting two checkouts simultaneously.  The DB unique constraint is the
 //   guarantee — no application-level lock needed.
 
-export async function verifyToken(_req: Request, res: Response): Promise<void> {
-  // TODO: implement
-  res.status(501).json({ error: 'Not implemented yet' });
+export async function verifyToken(req: Request, res: Response): Promise<void> {
+
+  const secretKeyHeader = req.headers['x-secret-key'] as string | undefined;
+  const { token } = req.body as { token?: string };
+
+  if (!secretKeyHeader || !token) {
+    res.status(400).json({
+      error: '`token` in body and `x-secret-key` header are required',
+    });
+    return;
+  }
+
+  // ── Step 2: Decode token header to extract publicKey before verification ─────
+  //
+  // We need publicKey to look up the correct secretKey from the cache.
+  // fast-jwt's createDecoder() decodes WITHOUT verifying — we use it only
+  // to peek at the payload and get `pk` (publicKey) and `eid` (eventId).
+  // Actual signature verification happens in Step 3 with the real secret.
+
+  let unverifiedPayload: {
+    jti?: string;
+    sub?: string;
+    pk?:  string;
+    eid?: string;
+    exp?: number;
+  };
+
+  try {
+    // fast-jwt: decode only, no verification
+    const decode = createVerifier({ key: async () => '', algorithms: ['HS256'], ignoreExpiration: true });
+    // Simpler approach — just use Buffer to decode the JWT payload section
+    const payloadB64 = token.split('.')[1];
+    if (!payloadB64) throw new Error('Malformed token');
+    unverifiedPayload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+  } catch {
+    res.status(400).json({ error: 'Malformed token' });
+    return;
+  }
+
+  const { pk: publicKey, eid: eventId } = unverifiedPayload;
+
+  if(!publicKey || !eventId){
+    res.status(400).json({ error: 'Token missing required claims' });
+    return;
+  }
+
+  // ── Step 3: Get the real secretKey from cache ────────────────────────────────
+  //
+  // Cross-check: the secretKey header the client sent must match what we have
+  // stored for this event. If they don't match, reject immediately.
+  // This prevents a client from verifying tokens belonging to another client's event.
+
+  const eventData = await getEventEntry(publicKey);
+
+  if (!eventData) {
+    res.status(404).json({ error: 'Event not found or not active' });
+    return;
+  }
+
+  if (secretKeyHeader !== eventData.secretKey) {
+    res.status(401).json({ error: 'Invalid secret key' });
+    return;
+  }
+
+  // ── Step 4: Verify JWT signature with fast-jwt ───────────────────────────────
+  //
+  // createVerifier() with the real secretKey. This confirms:
+  //   a) Signature is valid (token was signed by us with this event's secret)
+  //   b) Token hasn't expired (exp claim)
+  // Throws on any failure — caught below.
+
+
+  let verified: { jti: string; sub: string; exp: number };
+
+  try {
+    const verify = createVerifier({
+      key:        async () => eventData.secretKey,
+      algorithms: ['HS256'],
+    });
+
+    verified = await verify(token) as typeof verified;
+  } catch (err: any) {
+    if (err.code === 'FAST_JWT_EXPIRED') {
+      res.status(401).json({ error: 'TOKEN_EXPIRED' });
+      return;
+    }
+    res.status(401).json({ error: 'INVALID_TOKEN' });
+    return;
+  }
+
+  if (!verified.jti) {
+    res.status(400).json({ error: 'TOKEN_MISSING_JTI_CLAIM' });
+    return;
+  }
+
+  // ── Step 5: Atomically consume jti — double-spend shield ────────────────────
+  //
+  // jti is the PRIMARY KEY of UsedJti.
+  // Two concurrent verify calls both try to INSERT the same jti.
+  // First succeeds → 200. Second gets P2002 (unique violation) → 409.
+  // No distributed lock needed — the database constraint is the lock.
+
+  try {
+    await prisma.usedJti.create({
+      data: {
+        jti:         verified.jti,
+        saleEventId: eventId,
+        usedAt:      new Date(),
+        expiresAt:   new Date(verified.exp * 1000),
+      },
+    });
+  } catch (err: any) {
+    if (err.code === 'P2002') {
+      res.status(409).json({ error: 'TOKEN_ALREADY_EXIST' });
+      return;
+    }
+    console.error('[verify] UsedJti insert failed:', err);
+    res.status(500).json({ error: 'VERIFICATION_FAILED' });
+    return;
+  }
+
+  // ── Step 6: Respond ──────────────────────────────────────────────────────────
+
+  res.status(200).json({
+    verified:  true,
+    userId:    verified.sub,
+    eventId,
+  });
 }
