@@ -10,6 +10,7 @@ import redis, { connectRedis }  from './services/redis.service';
 import queueRoutes              from './routes/queue.routes';
 import adminRoutes              from './routes/admin.routes';
 import healthRouter             from './routes/health.routes';
+import jwksRouter from './routes/jwks.routes';
 
 const app  = express();
 const PORT = process.env.PORT ?? 4000;
@@ -22,6 +23,7 @@ app.use(express.json());
 app.use('/health',     healthRouter);
 app.use('/api/queue',  queueRoutes);
 app.use('/api/admin',  adminRoutes);
+app.use('/api/.well-known/jwks', jwksRouter);
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 //

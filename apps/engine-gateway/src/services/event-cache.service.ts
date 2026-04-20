@@ -2,10 +2,14 @@
 
 import prisma from '../lib/prisma';
 
-interface EventEntry{
-    secretKey: string;
-    eventId: string;
-    name: string;
+// rsaPrivateKey replaces secretKey
+// signingSecret added for release route HMAC
+interface EventEntry {
+  rsaPrivateKey:  string;   // PEM — signs JWTs
+  rsaPublicKey:   string;   // PEM — verifies JWTs
+  signingSecret:  string;   // HMAC secret for release route
+  eventId:        string;
+  name:           string;
 }
 
 // Module-level Map — lives in Node process RAM, not Redis
@@ -21,15 +25,24 @@ export async function getEventEntry(publicKey: string): Promise<EventEntry | nul
   // Cache miss — hit Postgres once, then never again for this event
   const event = await prisma.saleEvent.findUnique({
     where:  { publicKey },
-    select: { id: true, secretKey: true, name: true, status: true },
+    select: {
+      id:            true,
+      rsaPrivateKey: true,
+      rsaPublicKey:  true,
+      signingSecret: true,
+      name:          true,
+      status:        true,
+    },
   });
 
   if (!event || event.status !== 'ACTIVE') return null;
 
   const entry: EventEntry = {
-    secretKey: event.secretKey,
-    eventId: event.id,
-    name: event.name,
+    rsaPrivateKey:  event.rsaPrivateKey,
+    rsaPublicKey:   event.rsaPublicKey,
+    signingSecret:  event.signingSecret,
+    eventId:        event.id,
+    name:           event.name,
   };
 
   cache.set(publicKey, entry);

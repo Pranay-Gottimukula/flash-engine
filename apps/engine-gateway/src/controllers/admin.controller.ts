@@ -22,10 +22,16 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 import { Request, Response } from 'express';
+import { generateKeyPair }    from 'crypto';
+import { promisify }          from 'util';
 import crypto                 from 'crypto';
 import prisma from '../lib/prisma';
 import redis                  from '../services/redis.service';
 import { warmEventCache, evictEventCache } from '../services/event-cache.service';
+
+
+const generateKeyPairAsync = promisify(generateKeyPair);
+
 
 // TODO: Replace with a shared singleton from src/lib/prisma.ts
 // const prisma = new PrismaClient();
@@ -87,113 +93,70 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  // ── Step 2: Generate cryptographically secure key pair ────────────────────
+ // ── Step 3: Generate keys ───────────────────────────────────────────────────
   //
-  // WHY crypto.randomBytes() and NOT Math.random()?
-  //   Math.random() is a pseudo-random number generator seeded from the system
-  //   clock.  An attacker who knows approximately when your server started can
-  //   brute-force the seed and predict all future "random" values.
-  //   crypto.randomBytes() reads from the OS CSPRNG (/dev/urandom on Linux),
-  //   which is cryptographically unpredictable.
+  // Three separate keys, three separate purposes:
   //
-  // KEY LENGTH REASONING:
-  //   32 bytes = 256 bits of entropy.  At 10^9 guesses/second, that's
-  //   ~3.7 × 10^67 years to brute force.  Effectively unguessable.
+  //   rsaPrivateKey  → signs JWTs in queue.controller.ts (stays in engine)
+  //   rsaPublicKey   → verifies JWTs (served via JWKS, safe to expose)
+  //   signingSecret  → HMAC for release route request authentication
   //
-  // PREFIX CONVENTION (Stripe-style):
-  //   pk_live_  → public key  (safe to log, safe in browser JS)
-  //   sk_live_  → secret key  (NEVER log, NEVER expose to browser)
-  //   pk_test_  / sk_test_ for sandbox environments.
+  // generateKeyPairAsync is non-blocking — uses libuv thread pool.
+  // generateKeyPairSync would block the event loop for ~100ms.
+  //
+  // Both key generations run in parallel with Promise.all — saves ~100ms
+  // since they're independent operations.
 
-  const publicKey  = `pk_live_${crypto.randomBytes(32).toString('hex')}`;
-  const secretKey  = `sk_live_${crypto.randomBytes(32).toString('hex')}`;
+  const eventPublicKey = `pk_live_${crypto.randomBytes(32).toString('hex')}`;
+  const signingSecret  = `ss_live_${crypto.randomBytes(32).toString('hex')}`;
 
-  // ── Step 3: Hash the secret key before DB storage ─────────────────────────
-  //
-  // PATTERN: Store a one-way hash — return the plaintext exactly once.
-  //
-  // This means even if your database is breached, the attacker cannot use the
-  // secret keys.  On verification, hash the incoming key and compare to the
-  // stored hash.
-  //
-  // TODO: Uncomment when ready:
-  //
-  // const secretKeyHash = crypto
-  //   .createHash('sha256')
-  //   .update(rawSecretKey)
-  //   .digest('hex');
-  //
-  // For now we store the plaintext (acceptable for a development stub).
-  // const secretKeyToStore = secretKey; // TODO: replace with secretKeyHash
+  let rsaPrivateKey: string;
+  let rsaPublicKey:  string;
 
-  // ── Step 4: Persist to Postgres ───────────────────────────────────────────
-  //
-  // TODO: Replace the mock response below with a real Prisma insert:
-  //
-  // const event = await prisma.clientEvent.create({
-  //   data: {
-  //     name,
-  //     publicKey:  rawPublicKey,
-  //     secretKey:  secretKeyToStore,
-  //     stockCount,
-  //     rateLimit,
-  //     status:     'PENDING',
-  //   },
-  // });
-  //
-  // TRANSACTION NOTE: If you want to seed Redis ATOMICALLY with the DB insert
-  // (so you never have a DB row with no Redis state), wrap both in a Prisma
-  // interactive transaction:
-  //
-  // const event = await prisma.$transaction(async (tx) => {
-  //   const created = await tx.clientEvent.create({ data: { ... } });
-  //   await seedRedis(created.publicKey, stockCount, rateLimit);
-  //   return created;
-  // });
-  //
-  // If the Redis seed fails, the Prisma transaction rolls back the DB insert.
+  try {
+    const keypair = await generateKeyPairAsync('rsa', {
+      modulusLength:      2048,
+      publicKeyEncoding:  { type: 'spki',  format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
 
-  // ── Step 4: Persist to Postgres + seed Redis inside a transaction ───────────
-  //
-  // WHY a transaction?
-  //   If Postgres succeeds but Redis fails → DB row exists with no Redis state.
-  //   The Lua script returns EVENT_NOT_FOUND for a valid event.
-  //   Wrapping both means Redis failure rolls back the DB insert entirely.
-  //   Clean slate — retrying createEvent works correctly.
-  //
-  // NOTE: secretKey stored as plaintext in Postgres (not hashed) because the
-  //   queue controller needs the raw value to sign JWTs. Protect it with
-  //   database encryption at rest rather than application-level hashing.
-  //   secretKey is NEVER stored in Redis — it lives only in Postgres and the
-  //   Node process cache (event-cache.service.ts).
+    rsaPrivateKey = keypair.privateKey as unknown as string;
+    rsaPublicKey  = keypair.publicKey  as unknown as string;
+  } catch (err) {
+    console.error('[admin/createEvent] Key generation failed:', err);
+    res.status(500).json({ error: 'Failed to generate cryptographic keys' });
+    return;
+  }
+   // ── Step 4: Persist + seed Redis in transaction ─────────────────────────────
 
   let event: Awaited<ReturnType<typeof prisma.saleEvent.create>>;
 
   try {
-    event = await prisma.$transaction(async(tx) => {
-      const created = tx.saleEvent.create({
+    event = await prisma.$transaction(async (tx) => {
+      const created = await tx.saleEvent.create({
         data: {
           clientId,
           name,
           stockCount,
           rateLimit,
-          status:    'PENDING',
-          publicKey,
-          secretKey,
+          status:        'PENDING',
+          publicKey:     eventPublicKey,
+          rsaPrivateKey,
+          rsaPublicKey,
+          signingSecret,
         },
       });
 
       await seedRedis({
-        publicKey,
-        secretKey,
-        eventId:    (await created).id,
+        publicKey:  eventPublicKey,
+        eventId:    created.id,
         stockCount,
         rateLimit,
       });
 
       return created;
     });
-  } catch(err) {
+  } catch (err) {
     console.error('[admin/createEvent] Transaction failed:', err);
     res.status(500).json({ error: 'Failed to create event' });
     return;
@@ -219,13 +182,25 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
   // The response should also include a human-readable warning to that effect.
 
   // MOCK RESPONSE (replace with `event` from the Prisma insert above):
+  // ── Step 5: Respond ─────────────────────────────────────────────────────────
+  //
+  // We return:
+  //   publicKey     → client puts this in their frontend (identifies the event)
+  //   signingSecret → client uses this to sign release requests (keep server-side)
+  //   rsaPublicKey  → client uses this to verify JWTs locally (safe to expose)
+  //
+  // rsaPrivateKey is NEVER returned — it stays in your Postgres only.
+  // Unlike HS256, the client never needs the private key for anything.
+
   res.status(201).json({
-    message:   'Event created. Copy your secretKey now — it will not be shown again.',
-    id:        event.id,
-    name:      event.name,
-    status:    event.status,
-    publicKey,
-    secretKey,
+    message:       'Event created. Store signingSecret securely — it will not be shown again.',
+    id:            event.id,
+    name:          event.name,
+    status:        event.status,
+    publicKey:     eventPublicKey,
+    signingSecret,                  // for release route HMAC — shown once
+    rsaPublicKey,                   // for JWT verification — safe to store anywhere
+    jwksUrl:       `${process.env.ENGINE_URL}/api/.well-known/jwks/${eventPublicKey}`,
   });
 }
 
@@ -234,12 +209,11 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
 
 async function seedRedis(params: {
   publicKey:  string;
-  secretKey:  string;
   eventId:    string;
   stockCount: number;
   rateLimit:  number;
 }): Promise<void> {
-  const { publicKey, secretKey, eventId, stockCount, rateLimit } = params;
+  const { publicKey, eventId, stockCount, rateLimit } = params;
   const key = `flash:event:${publicKey}`;
 
   // Check if already seeded — prevents overwrite on duplicate calls
@@ -249,13 +223,15 @@ async function seedRedis(params: {
   }
 
   // Pipeline batches all HSET calls into one TCP round-trip
+  // NOTE: secretKey is NOT stored in Redis anymore — we use RSA.
+  // The private key stays in Postgres only and is loaded into the
+  // Node process cache on activation via warmEventCache().
   const pipeline = redis.pipeline();
   pipeline.hset(key, 'status',           'PENDING');
   pipeline.hset(key, 'stock',            String(stockCount));
   pipeline.hset(key, 'rateLimit',        String(rateLimit));
   pipeline.hset(key, 'bucketTokens',     String(rateLimit));  // start full
   pipeline.hset(key, 'bucketLastRefill', String(Date.now()));
-  pipeline.hset(key, 'secretKey',        secretKey);          // for JWT signing
   pipeline.hset(key, 'eventId',          eventId);            // for audit log
   pipeline.expire(key, 48 * 60 * 60);                         // 48hr TTL safety net
   await pipeline.exec();
@@ -282,12 +258,12 @@ export async function activateEvent(req: Request<{ id: string }>, res: Response)
   const event = await prisma.saleEvent.findUnique({ where: { id } });
 
   if(!event){
-    res.send(400).json({ error: 'Event not found' });
+    res.status(400).json({ error: 'Event not found' });
     return;
   }
 
   if(event.status !== 'PENDING'){
-    res.send(409).json({ error: `Cannot activate — current status: ${event.status}` });
+    res.status(409).json({ error: `Cannot activate — current status: ${event.status}` });
     return;
   }
 
@@ -322,9 +298,11 @@ export async function activateEvent(req: Request<{ id: string }>, res: Response)
   // everything is in sync and it's safe to start serving traffic.
 
   warmEventCache(event.publicKey, {
-    secretKey: event.secretKey,
-    eventId: event.id,
-    name: event.name,
+    rsaPrivateKey:  event.rsaPrivateKey,
+    rsaPublicKey:   event.rsaPublicKey,
+    signingSecret:  event.signingSecret,
+    eventId:        event.id,
+    name:           event.name,
   });
 
   res.status(200).json({

@@ -221,9 +221,9 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   const jti = uuidv4();
 
   const sign = createSigner({
-    key:       eventData.secretKey,
-    algorithm: 'HS256',
-    expiresIn: JWT_EXPIRY_SEC * 1000, // fast-jwt takes milliseconds, not seconds
+    key:       async () => eventData.rsaPrivateKey,  // PEM private key
+    algorithm: 'RS256',
+    expiresIn: JWT_EXPIRY_SEC * 1000,
   });
 
   const token = sign({
@@ -295,12 +295,12 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
 
 export async function verifyToken(req: Request, res: Response): Promise<void> {
 
-  const secretKeyHeader = req.headers['x-secret-key'] as string | undefined;
-  const { token } = req.body as { token?: string };
+  const publicKeyHeader = req.headers['x-public-key'] as string | undefined;
+  const { token }        = req.body as { token?: string };
 
-  if (!secretKeyHeader || !token) {
+  if (!publicKeyHeader || !token) {
     res.status(400).json({
-      error: '`token` in body and `x-secret-key` header are required',
+      error: '`token` in body and `x-public-key` header are required',
     });
     return;
   }
@@ -321,12 +321,11 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
   };
 
   try {
-    // fast-jwt: decode only, no verification
-    const decode = createVerifier({ key: async () => '', algorithms: ['HS256'], ignoreExpiration: true });
-    // Simpler approach — just use Buffer to decode the JWT payload section
     const payloadB64 = token.split('.')[1];
     if (!payloadB64) throw new Error('Malformed token');
-    unverifiedPayload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    unverifiedPayload = JSON.parse(
+      Buffer.from(payloadB64, 'base64url').toString('utf8')
+    );
   } catch {
     res.status(400).json({ error: 'Malformed token' });
     return;
@@ -336,6 +335,13 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
 
   if(!publicKey || !eventId){
     res.status(400).json({ error: 'Token missing required claims' });
+    return;
+  }
+
+  // Cross-check: token's pk claim must match the header
+  // Prevents a client from verifying another client's token
+  if (publicKey !== publicKeyHeader) {
+    res.status(401).json({ error: 'Token does not belong to this event' });
     return;
   }
 
@@ -352,47 +358,35 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  if (secretKeyHeader !== eventData.secretKey) {
-    res.status(401).json({ error: 'Invalid secret key' });
-    return;
-  }
-
-  // ── Step 4: Verify JWT signature with fast-jwt ───────────────────────────────
-  //
-  // createVerifier() with the real secretKey. This confirms:
-  //   a) Signature is valid (token was signed by us with this event's secret)
-  //   b) Token hasn't expired (exp claim)
-  // Throws on any failure — caught below.
-
+  // ── Step 4: Verify signature with RS256 ─────────────────────────────────────
 
   let verified: { jti: string; sub: string; exp: number };
 
   try {
     const verify = createVerifier({
-      key:        async () => eventData.secretKey,
-      algorithms: ['HS256'],
+      key:        async () => eventData.rsaPublicKey,  // public key — not private
+      algorithms: ['RS256'],
     });
 
     verified = await verify(token) as typeof verified;
   } catch (err: any) {
     if (err.code === 'FAST_JWT_EXPIRED') {
-      res.status(401).json({ error: 'TOKEN_EXPIRED' });
+      res.status(401).json({ error: 'Token expired' });
       return;
     }
-    res.status(401).json({ error: 'INVALID_TOKEN' });
+    res.status(401).json({ error: 'Invalid token' });
     return;
   }
 
   if (!verified.jti) {
-    res.status(400).json({ error: 'TOKEN_MISSING_JTI_CLAIM' });
+    res.status(400).json({ error: 'Token missing jti claim' });
     return;
   }
 
-  // ── Step 5: Atomically consume jti — double-spend shield ────────────────────
+  // ── Steps 5: UsedJti insert + respond — identical to before ─────────────
   //
   // jti is the PRIMARY KEY of UsedJti.
   // Two concurrent verify calls both try to INSERT the same jti.
-  // First succeeds → 200. Second gets P2002 (unique violation) → 409.
   // No distributed lock needed — the database constraint is the lock.
 
   try {
@@ -406,19 +400,20 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
     });
   } catch (err: any) {
     if (err.code === 'P2002') {
-      res.status(409).json({ error: 'TOKEN_ALREADY_EXIST' });
+      res.status(409).json({ error: 'Token already used' });
       return;
     }
     console.error('[verify] UsedJti insert failed:', err);
-    res.status(500).json({ error: 'VERIFICATION_FAILED' });
+    res.status(500).json({ error: 'Verification failed' });
     return;
   }
+
 
   // ── Step 6: Respond ──────────────────────────────────────────────────────────
 
   res.status(200).json({
-    verified:  true,
-    userId:    verified.sub,
+    verified: true,
+    userId:   verified.sub,
     eventId,
   });
 }
