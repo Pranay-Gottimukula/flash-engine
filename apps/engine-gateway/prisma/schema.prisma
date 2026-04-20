@@ -13,34 +13,42 @@ datasource db {
   provider = "postgresql"
 }
 
-// The company/developer who signed up for your SaaS
 model Client {
   id        String      @id @default(cuid())
-  email     String      @unique               
+  email     String      @unique
+  publicKey String      @unique
+  // secretKey removed from Client — Client no longer has HS256 secret
+  // Authentication to dashboard handled separately (sessions/OAuth)
   createdAt DateTime    @default(now())
-
   events    SaleEvent[]
 }
 
-// One flash sale event — a Client can run many over time
 model SaleEvent {
-  id         String   @id @default(cuid())
-  clientId   String
-  name       String
-
-  publicKey String      @unique   
-  secretKey String      @unique   
-
-  stockCount Int
-  rateLimit  Int      @default(50)  // winners per second
-  status     String   @default("PENDING") // PENDING | ACTIVE | ENDED
-  createdAt  DateTime @default(now())
+  id           String   @id @default(cuid())
+  clientId     String
+  name         String
+  stockCount   Int
+  rateLimit    Int      @default(50)
+  status       String   @default("PENDING")
+  publicKey    String   @unique
+  
+  // RS256 keypair — replaces secretKey
+  rsaPrivateKey  String   // PEM — signs JWTs, never leaves engine
+  rsaPublicKey   String   // PEM — served via JWKS, clients verify with this
+  
+  // Separate HMAC secret purely for release route request signing
+  // Kept as random bytes — no reason to use RSA for request authentication
+  signingSecret  String
+  
+  createdAt    DateTime @default(now())
 
   client    Client          @relation(fields: [clientId], references: [id])
   attempts  QueueAttempt[]
   releases  TicketRelease[]
   usedJtis  UsedJti[]
 }
+
+// QueueAttempt, TicketRelease, UsedJti — no changes
 
 // Every join attempt logged — WON, LOST, or RATE_LIMITED
 // Gives you analytics: how many people tried, how many won, drop-off rate

@@ -30,13 +30,13 @@
 //   });
 // ──────────────────────────────────────────────────────────────────────────────
 
-import { Request, Response } from 'express';
-import jwt                    from 'jsonwebtoken';
-import { v4 as uuidv4 }       from 'uuid';
-import redis                  from '../services/redis.service';
-import prisma from '../lib/prisma';
+import { Request, Response }              from 'express';
+import { createSigner, createVerifier }   from 'fast-jwt';
+import { v4 as uuidv4 }                   from 'uuid';
+import redis                              from '../services/redis.service';
+import prisma                             from '../lib/prisma';
+import { getEventEntry }                  from '../services/event-cache.service';
 
-const JWT_SECRET     = process.env.JWT_SECRET      ?? (() => { throw new Error('JWT_SECRET is not set') })();
 const JWT_EXPIRY_SEC = 15 * 60; // 15 minutes — window for end-user to complete purchase
 //
 // WHY 15 MINUTES?
@@ -59,22 +59,26 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   //
   // TODO: Replace this manual check with a zod schema for type-safety:
   //
-    // const JoinSchema = z.object({
-    //   publicKey: z.string().startsWith('pk_'),
-    //   userId:    z.string().min(1).max(256),
-    //   payload:   z.record(z.unknown()).optional(),
-    // });
-    // const body = JoinSchema.safeParse(req.body);
-    // if (!body.success) { res.status(400).json(...); return; }
-
-  const { publicKey, userId, payload } = req.body as {
+  // const JoinSchema = z.object({
+  //   publicKey: z.string().startsWith('pk_'),
+  //   userId:    z.string().min(1).max(256),
+  //   payload:   z.record(z.unknown()).optional(),
+  // });
+  // const body = JoinSchema.safeParse(req.body);
+  // if (!body.success) { res.status(400).json(...); return; }
+  
+  const { publicKey, userId } = req.body as {
     publicKey?: string;
     userId?:    string;
-    payload?:   Record<string, unknown>;
   };
 
   if (!publicKey || !userId) {
     res.status(400).json({ error: '`publicKey` and `userId` are required' });
+    return;
+  }
+
+  if (!publicKey.startsWith('pk_live_')) {
+    res.status(400).json({ error: 'Invalid public key format' });
     return;
   }
 
@@ -129,6 +133,60 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   //   if (code === -1) { res.status(410).json({ error: 'SOLD_OUT' }); return; }
   //   // code === 1 → fall through to JWT generation
 
+  let code: number;
+  let reason: string;
+
+  try{
+    [code, reason] = await redis.leakyBucket(
+      1,
+      `flash:event:${publicKey}`,
+      Date.now(),
+    ) as [number, string];
+  } catch(err) {
+    console.error('[queue/join] Redis error:', err);
+    res.status(503).json({ error: 'Queue service temporarily unavailable' });
+    return;
+  }
+
+  // Map Lua codes → HTTP for everyone who didn't win
+  // These are logged as fire-and-forget audit entries below
+  if (code === -4) {
+    res.status(404).json({ error: 'Event not found' });
+    return;
+  }
+  if (code === -3) {
+    res.status(403).json({ error: 'Event is not active' });
+    return;
+  }
+  if(code === -2) {
+    res.status(429).json({ error: 'RATE_LIMITED', retryAfterMs: 1000 });
+
+    prisma.queueAttempt.create({
+      data: { saleEventId: '', userId, result: 'RATE_LIMITED', jti: null },
+    }).catch(() => {});
+
+    return;
+  }
+  if(code === -1) {
+    res.status(401).json({ error: 'SOLD_OUT' });
+
+    prisma.queueAttempt.create({
+      data: { saleEventId: '', userId, result: 'SOLD_OUT', jti: null },
+    }).catch(() => {});
+
+    return;
+  }
+
+  const eventData = await getEventEntry(publicKey);
+
+  if (!eventData) {
+    // Extremely rare: event was ended between Lua passing and this line.
+    // Stock was already decremented — release it back.
+    await redis.hincrby(`flash:event:${publicKey}`, 'stock', 1).catch(() => {});
+    res.status(410).json({ error: 'Event no longer active' });
+    return;
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   // STEP 4 — Generate a signed JWT with a unique `jti` (JWT ID)
   // ══════════════════════════════════════════════════════════════════════════
@@ -162,27 +220,19 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
 
   const jti = uuidv4();
 
-  const tokenPayload = {
-    jti,
-    sub: userId,              // opaque user identifier
-    pk:  publicKey,           // which event this token belongs to
-    // TODO: add `payload` (B2B client's custom data) here if needed:
-    // ...(payload && { ext: payload }),
-  };
-
-  const token = jwt.sign(tokenPayload, JWT_SECRET, {
-    expiresIn: JWT_EXPIRY_SEC,
-    algorithm: 'HS256',
-    //
-    // TODO: Switch to RS256 (asymmetric) in production so that the B2B client's
-    // verify endpoint can validate tokens using only your PUBLIC key — they
-    // never need to know the private signing key.
-    //
-    // Asymmetric JWT flow:
-    //   Engine signs with:   privateKey  (stays in engine-gateway only)
-    //   Client verifies with: publicKey  (served from GET /api/.well-known/jwks.json)
-    //   This is how Auth0 / Cognito work.
+  const sign = createSigner({
+    key:       async () => eventData.rsaPrivateKey,  // PEM private key
+    algorithm: 'RS256',
+    expiresIn: JWT_EXPIRY_SEC * 1000,
   });
+
+  const token = sign({
+    jti,
+    sub: userId,
+    pk:  publicKey,
+    eid: eventData.eventId,
+  });
+  
 
   // ══════════════════════════════════════════════════════════════════════════
   // STEP 5 — Fire-and-forget audit log (DO NOT AWAIT)
@@ -202,18 +252,25 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   // By not awaiting this, we don't block the response.  The latency cost of
   // a Postgres insert (~5-20ms) is NOT added to the user's response time.
 
+    // DO NOT AWAIT — Postgres latency (~5-20ms) must never block this response.
+  // If this write fails, user already won. Log and move on.
+  prisma.queueAttempt.create({
+    data: {
+      saleEventId: eventData.eventId,
+      userId,
+      result:      'WON',
+      jti,
+    },
+  }).catch(err => console.error('[audit] QueueAttempt write failed:', err));
+
   // ══════════════════════════════════════════════════════════════════════════
   // STEP 6 — Respond
   // ══════════════════════════════════════════════════════════════════════════
 
   res.status(200).json({
-    result:     'WON',
+    result:    'WON',
     token,
-    expiresIn:  JWT_EXPIRY_SEC,
-    //
-    // The B2B client passes this `token` to their checkout flow.
-    // The checkout backend then calls POST /api/verify with this token to
-    // atomically consume the ticket and confirm the purchase.
+    expiresIn: JWT_EXPIRY_SEC,
   });
 }
 
@@ -236,7 +293,127 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
 //   submitting two checkouts simultaneously.  The DB unique constraint is the
 //   guarantee — no application-level lock needed.
 
-export async function verifyToken(_req: Request, res: Response): Promise<void> {
-  // TODO: implement
-  res.status(501).json({ error: 'Not implemented yet' });
+export async function verifyToken(req: Request, res: Response): Promise<void> {
+
+  const publicKeyHeader = req.headers['x-public-key'] as string | undefined;
+  const { token }        = req.body as { token?: string };
+
+  if (!publicKeyHeader || !token) {
+    res.status(400).json({
+      error: '`token` in body and `x-public-key` header are required',
+    });
+    return;
+  }
+
+  // ── Step 2: Decode token header to extract publicKey before verification ─────
+  //
+  // We need publicKey to look up the correct secretKey from the cache.
+  // fast-jwt's createDecoder() decodes WITHOUT verifying — we use it only
+  // to peek at the payload and get `pk` (publicKey) and `eid` (eventId).
+  // Actual signature verification happens in Step 3 with the real secret.
+
+  let unverifiedPayload: {
+    jti?: string;
+    sub?: string;
+    pk?:  string;
+    eid?: string;
+    exp?: number;
+  };
+
+  try {
+    const payloadB64 = token.split('.')[1];
+    if (!payloadB64) throw new Error('Malformed token');
+    unverifiedPayload = JSON.parse(
+      Buffer.from(payloadB64, 'base64url').toString('utf8')
+    );
+  } catch {
+    res.status(400).json({ error: 'Malformed token' });
+    return;
+  }
+
+  const { pk: publicKey, eid: eventId } = unverifiedPayload;
+
+  if(!publicKey || !eventId){
+    res.status(400).json({ error: 'Token missing required claims' });
+    return;
+  }
+
+  // Cross-check: token's pk claim must match the header
+  // Prevents a client from verifying another client's token
+  if (publicKey !== publicKeyHeader) {
+    res.status(401).json({ error: 'Token does not belong to this event' });
+    return;
+  }
+
+  // ── Step 3: Get the real secretKey from cache ────────────────────────────────
+  //
+  // Cross-check: the secretKey header the client sent must match what we have
+  // stored for this event. If they don't match, reject immediately.
+  // This prevents a client from verifying tokens belonging to another client's event.
+
+  const eventData = await getEventEntry(publicKey);
+
+  if (!eventData) {
+    res.status(404).json({ error: 'Event not found or not active' });
+    return;
+  }
+
+  // ── Step 4: Verify signature with RS256 ─────────────────────────────────────
+
+  let verified: { jti: string; sub: string; exp: number };
+
+  try {
+    const verify = createVerifier({
+      key:        async () => eventData.rsaPublicKey,  // public key — not private
+      algorithms: ['RS256'],
+    });
+
+    verified = await verify(token) as typeof verified;
+  } catch (err: any) {
+    if (err.code === 'FAST_JWT_EXPIRED') {
+      res.status(401).json({ error: 'Token expired' });
+      return;
+    }
+    res.status(401).json({ error: 'Invalid token' });
+    return;
+  }
+
+  if (!verified.jti) {
+    res.status(400).json({ error: 'Token missing jti claim' });
+    return;
+  }
+
+  // ── Steps 5: UsedJti insert + respond — identical to before ─────────────
+  //
+  // jti is the PRIMARY KEY of UsedJti.
+  // Two concurrent verify calls both try to INSERT the same jti.
+  // No distributed lock needed — the database constraint is the lock.
+
+  try {
+    await prisma.usedJti.create({
+      data: {
+        jti:         verified.jti,
+        saleEventId: eventId,
+        usedAt:      new Date(),
+        expiresAt:   new Date(verified.exp * 1000),
+      },
+    });
+  } catch (err: any) {
+    if (err.code === 'P2002') {
+      res.status(409).json({ error: 'Token already used' });
+      return;
+    }
+    console.error('[verify] UsedJti insert failed:', err);
+    res.status(500).json({ error: 'Verification failed' });
+    return;
+  }
+
+
+  // ── Step 6: Respond ──────────────────────────────────────────────────────────
+
+  res.status(200).json({
+    verified: true,
+    userId:   verified.sub,
+    eventId,
+  });
 }
