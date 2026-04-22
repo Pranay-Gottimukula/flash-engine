@@ -4,7 +4,8 @@ import { Request, Response } from 'express';
 import crypto                from 'crypto';
 import redis                 from '../services/redis.service';
 import prisma                from '../lib/prisma';
-import { getEventEntry }     from '../services/event-cache.service';
+// getEventEntry is NOT called here — requireEventOwnership middleware runs
+// before this handler and attaches the validated event to res.locals.eventData.
 
 // ── POST /api/queue/release ───────────────────────────────────────────────────
 //
@@ -90,18 +91,16 @@ export async function releaseTicket(req: Request, res: Response): Promise<void>{
     return;
   }
 
-  // ── Step 3: Fetch secretKey from Node cache ──────────────────────────────────
+  // ── Step 3: Read event data from res.locals ──────────────────────────────────
   //
-  // getEventEntry() hits the in-process Map first (O(1)).
-  // On cache miss it hits Postgres once and caches the result.
-  // secretKey never comes from Redis — Option 2 security decision.
+  // requireEventOwnership (queue.routes.ts) already called getEventEntry() and
+  // confirmed the event is ACTIVE before this handler ran.  Reading from
+  // res.locals is O(1) with no I/O — no reason to hit the cache a second time.
+  //
+  // TypeScript knows the shape of res.locals.eventData because Express.Locals
+  // is augmented in event-ownership.middleware.ts.
 
-  const eventData = await getEventEntry(publicKey);
-
-  if (!eventData) {
-    res.status(404).json({ error: 'Event not found or not active' });
-    return;
-  }
+  const eventData = res.locals.eventData;
 
   // ── Step 4: Verify HMAC signature ───────────────────────────────────────────
   //

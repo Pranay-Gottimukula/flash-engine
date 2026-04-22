@@ -1,16 +1,19 @@
 // apps/engine-gateway/src/routes/admin.routes.ts
 
-import { Router }         from 'express';
+import { Router }             from 'express';
 import {
   createEvent,
   activateEvent,
   endEvent,
 } from '../controllers/admin.controller';
+import { requireAdminSecret } from '../middleware/admin-auth.middleware';
 
 const router = Router();
 
-// TODO: add admin auth middleware before these routes go to production
-// router.use(requireAdminSecret);
+// Protect every route registered on this router.
+// router.use() here applies to POST /events, PUT /events/:id/activate, and
+// PUT /events/:id/end — no individual route needs to be annotated.
+router.use(requireAdminSecret);
 
 router.post  ('/events',             createEvent);
 router.put   ('/events/:id/activate', activateEvent);
