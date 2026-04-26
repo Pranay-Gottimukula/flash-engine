@@ -98,8 +98,23 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   }
 
   if (code === -5) {
-    const pollUrl = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
-    res.status(200).json({ status: 'ALREADY_JOINED', pollUrl });
+    // User is already in the system — check their current status rather than
+    // returning a generic ALREADY_JOINED so they get an actionable response.
+    const current = await resolveUserStatus(publicKey, userId);
+    if (current.status === 'QUEUED') {
+      const pollUrl = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
+      res.status(200).json({ status: 'ALREADY_JOINED', position: current.position, pollUrl });
+    } else if (current.status === 'WON') {
+      current.tokenExpired
+        ? res.status(200).json({ status: 'WON', tokenExpired: true })
+        : res.status(200).json({ status: 'WON', token: current.token });
+    } else if (current.status === 'SOLD_OUT') {
+      res.status(200).json({ status: 'SOLD_OUT' });
+    } else {
+      // NOT_FOUND — defensive fallback (Lua said ALREADY_JOINED but state is gone)
+      const pollUrl = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
+      res.status(200).json({ status: 'ALREADY_JOINED', pollUrl });
+    }
     return;
   }
 
@@ -161,6 +176,76 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   }).catch(err => console.error('[audit] QueueAttempt write failed:', err));
 
   res.status(200).json({ status: 'WON', token });
+}
+
+// ── GET /api/queue/status ─────────────────────────────────────────────────────
+//
+// Polling endpoint for queued users. Zero Postgres queries — pure Redis reads.
+// Query params: pk (publicKey), userId
+
+export async function getQueueStatus(req: Request, res: Response): Promise<void> {
+  const { pk, userId } = req.query as { pk?: string; userId?: string };
+
+  if (!pk || !userId) {
+    res.status(400).json({ error: '`pk` and `userId` query params are required' });
+    return;
+  }
+
+  const current = await resolveUserStatus(pk, userId);
+
+  if (current.status === 'WON') {
+    current.tokenExpired
+      ? res.status(200).json({ status: 'WON', tokenExpired: true })
+      : res.status(200).json({ status: 'WON', token: current.token });
+    return;
+  }
+
+  if (current.status === 'SOLD_OUT') {
+    res.status(200).json({ status: 'SOLD_OUT' });
+    return;
+  }
+
+  if (current.status === 'QUEUED') {
+    res.status(200).json({ status: 'QUEUED', position: current.position });
+    return;
+  }
+
+  res.status(404).json({ error: 'NOT_FOUND' });
+}
+
+// ── Helper: resolve a user's current status from Redis ───────────────────────
+//
+// Used by both getQueueStatus and the ALREADY_JOINED path in joinQueue.
+// All reads are from Redis — no Postgres, no event-cache.
+
+type UserStatus =
+  | { status: 'WON';      token: string }
+  | { status: 'WON';      tokenExpired: true }
+  | { status: 'SOLD_OUT' }
+  | { status: 'QUEUED';   position: number }
+  | { status: 'NOT_FOUND' };
+
+async function resolveUserStatus(publicKey: string, userId: string): Promise<UserStatus> {
+  const { queueKey, resultKey } = getRedisKeys(publicKey);
+
+  const result = await redis.hget(resultKey, userId);
+
+  if (result === 'WON') {
+    const token = await redis.get(`flash:ticket:${publicKey}:${userId}`);
+    return token ? { status: 'WON', token } : { status: 'WON', tokenExpired: true };
+  }
+
+  if (result === 'SOLD_OUT') {
+    return { status: 'SOLD_OUT' };
+  }
+
+  // Not in result hash yet — check the waiting queue
+  const rank = await redis.zrank(queueKey, userId);
+  if (rank !== null) {
+    return { status: 'QUEUED', position: rank + 1 }; // ZRANK is 0-based
+  }
+
+  return { status: 'NOT_FOUND' };
 }
 
 // ── POST /api/queue/verify ────────────────────────────────────────────────────
