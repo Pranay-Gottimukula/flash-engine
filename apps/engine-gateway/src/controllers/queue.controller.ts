@@ -33,7 +33,7 @@
 import { Request, Response }              from 'express';
 import { createSigner, createVerifier }   from 'fast-jwt';
 import { v4 as uuidv4 }                   from 'uuid';
-import redis                              from '../services/redis.service';
+import redis, { getRedisKeys }            from '../services/redis.service';
 import prisma                             from '../lib/prisma';
 import { getEventEntry }                  from '../services/event-cache.service';
 
@@ -53,20 +53,7 @@ const JWT_EXPIRY_SEC = 15 * 60; // 15 minutes — window for end-user to complet
 // We only use it for analytics (QueueAttempt.userId).
 
 export async function joinQueue(req: Request, res: Response): Promise<void> {
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 1 — Parse & validate inputs
-  // ══════════════════════════════════════════════════════════════════════════
-  //
-  // TODO: Replace this manual check with a zod schema for type-safety:
-  //
-  // const JoinSchema = z.object({
-  //   publicKey: z.string().startsWith('pk_'),
-  //   userId:    z.string().min(1).max(256),
-  //   payload:   z.record(z.unknown()).optional(),
-  // });
-  // const body = JoinSchema.safeParse(req.body);
-  // if (!body.success) { res.status(400).json(...); return; }
-  
+  // ── Step 1: Parse & validate ─────────────────────────────────────────────
   const { publicKey, userId } = req.body as {
     publicKey?: string;
     userId?:    string;
@@ -82,196 +69,98 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 2 — Validate the public key (check event exists & is ACTIVE)
-  // ══════════════════════════════════════════════════════════════════════════
-  //
-  // We ONLY read from Redis here — never Postgres.
-  //
-  // TODO: Replace the mock below with:
-  //
-  //   const redisKey   = `flash:event:${publicKey}`;
-  //   const eventStatus = await redis.hget(redisKey, 'status');
-  //
-  //   if (!eventStatus) {
-  //     // Key doesn't exist in Redis → unknown publicKey
-  //     res.status(404).json({ error: 'Event not found' });
-  //     return;
-  //   }
-  //   if (eventStatus !== 'ACTIVE') {
-  //     // Event is PENDING or ENDED
-  //     res.status(403).json({ error: `Event is ${eventStatus}` });
-  //     return;
-  //   }
-  //
-  // CACHING NOTE: If you want to pre-warm the Redis hash from Postgres on
-  // cache-miss, do it here with a read-through pattern.  But for performance,
-  // the event state should always be in Redis before the sale goes ACTIVE.
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 3 — Execute the Lua Leaky Bucket script (atomic rate limit + dequeue)
-  // ══════════════════════════════════════════════════════════════════════════
-  //
-  // This is the core of the system.  The Lua script atomically:
-  //   a) Checks event status (guard against race with Step 2)
-  //   b) Checks + updates the token bucket (rate limiting)
-  //   c) Decrements the stock counter
-  //   d) Returns a result code: 1=WON, -1=SOLD_OUT, -2=RATE_LIMITED, -3=NOT_ACTIVE
-  //
-  // See redis.service.ts for the full Lua script pseudocode.
-  //
-  // TODO: Uncomment when Lua script is registered:
-  //
-  //   const [code, reason] = await redis.leakyBucket(
-  //     1,                               // numkeys
-  //     `flash:event:${publicKey}`,      // KEYS[1]
-  //     Date.now(),                      // ARGV[1] — now in ms for bucket refill
-  //   ) as [number, string];
-  //
-  //   if (code === -3) { res.status(403).json({ error: 'EVENT_NOT_ACTIVE' }); return; }
-  //   if (code === -2) { res.status(429).json({ error: 'RATE_LIMITED',  retryAfterMs: 1000 }); return; }
-  //   if (code === -1) { res.status(410).json({ error: 'SOLD_OUT' }); return; }
-  //   // code === 1 → fall through to JWT generation
+  // ── Step 2: Atomic queue admission (rate limit + stock + queue) ──────────
+  const { eventKey, queueKey, resultKey } = getRedisKeys(publicKey);
 
   let code: number;
-  let reason: string;
+  let position: number | undefined;
 
-  try{
-    [code, reason] = await redis.leakyBucket(
-      1,
-      `flash:event:${publicKey}`,
-      Date.now(),
-    ) as [number, string];
-  } catch(err) {
+  try {
+    [code, , position] = await redis.queueAdmission(
+      eventKey, queueKey, resultKey, Date.now(), userId,
+    );
+  } catch (err) {
     console.error('[queue/join] Redis error:', err);
     res.status(503).json({ error: 'Queue service temporarily unavailable' });
     return;
   }
 
-  // Map Lua codes → HTTP for everyone who didn't win
-  // These are logged as fire-and-forget audit entries below
+  // ── Step 3: Map Lua return codes → HTTP responses ────────────────────────
+
   if (code === -4) {
-    res.status(404).json({ error: 'Event not found' });
+    res.status(404).json({ error: 'EVENT_NOT_FOUND' });
     return;
   }
+
   if (code === -3) {
-    res.status(403).json({ error: 'Event is not active' });
+    res.status(400).json({ error: 'EVENT_NOT_ACTIVE' });
     return;
   }
-  if(code === -2) {
-    res.status(429).json({ error: 'RATE_LIMITED', retryAfterMs: 1000 });
 
-    prisma.queueAttempt.create({
-      data: { saleEventId: '', userId, result: 'RATE_LIMITED', jti: null },
-    }).catch(() => {});
-
+  if (code === -5) {
+    const pollUrl = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
+    res.status(200).json({ status: 'ALREADY_JOINED', pollUrl });
     return;
   }
-  if(code === -1) {
-    res.status(401).json({ error: 'SOLD_OUT' });
 
+  if (code === -1) {
     prisma.queueAttempt.create({
       data: { saleEventId: '', userId, result: 'SOLD_OUT', jti: null },
     }).catch(() => {});
-
+    res.status(200).json({ status: 'SOLD_OUT' });
     return;
   }
+
+  if (code === 0) {
+    prisma.queueAttempt.create({
+      data: { saleEventId: '', userId, result: 'QUEUED', jti: null },
+    }).catch(() => {});
+    const pollUrl = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
+    res.status(202).json({
+      status:         'QUEUED',
+      position:       position ?? 0,
+      pollUrl,
+      pollIntervalMs: 2000,
+    });
+    return;
+  }
+
+  // ── code === 1: INSTANT WIN ───────────────────────────────────────────────
+  //
+  // Only instant winners need the event cache — queued users never reach here.
+  // Cache miss falls back to Postgres once; subsequent requests hit in-process cache.
 
   const eventData = await getEventEntry(publicKey);
 
   if (!eventData) {
-    // Extremely rare: event was ended between Lua passing and this line.
-    // Stock was already decremented — release it back.
-    await redis.hincrby(`flash:event:${publicKey}`, 'stock', 1).catch(() => {});
+    // Extremely rare: event ended between Lua passing and this line.
+    // Lua already decremented stock — release it back.
+    await redis.hincrby(eventKey, 'stock', 1).catch(() => {});
     res.status(410).json({ error: 'Event no longer active' });
     return;
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 4 — Generate a signed JWT with a unique `jti` (JWT ID)
-  // ══════════════════════════════════════════════════════════════════════════
-  //
-  // WHAT IS `jti`?
-  //   The `jti` (JWT ID) claim is a UUID that uniquely identifies this specific
-  //   token.  It is the cornerstone of the double-spend shielding mechanism.
-  //
-  // DOUBLE-SPEND SHIELD FLOW:
-  //   1. We issue a JWT containing jti = uuidv4().
-  //   2. The end-user presents this JWT to the B2B client's checkout backend.
-  //   3. The client's backend calls our POST /api/verify endpoint.
-  //   4. Our verify endpoint:
-  //        a) Validates the JWT signature.
-  //        b) Checks if jti is in the UsedJti table (Postgres).
-  //        c) If NOT present: INSERT INTO UsedJti (jti, …) → return 200 OK.
-  //        d) If ALREADY present: return 409 Conflict → ticket already used.
-  //   5. The Postgres INSERT uses the `jti` as the primary key (guaranteed unique).
-  //      Two concurrent verify calls race to insert — the second one gets a
-  //      unique constraint violation, which maps to 409.  No distributed lock needed.
-  //
-  // WHY NOT REDIS FOR jti STORAGE?
-  //   Redis is not the right durability boundary.  A Redis restart or eviction
-  //   would clear the used-jti set, allowing replay attacks.  Postgres gives us
-  //   durability guarantees (WAL) appropriate for financial audit data.
-  //
-  // JWT PAYLOAD DESIGN:
-  //   Keep the payload minimal — JWTs are base64-encoded and sent with every
-  //   HTTP request.  Don't embed PII (email, name) inside the token.
-  //   The `sub` subject claim should be an opaque identifier only.
-
   const jti = uuidv4();
 
   const sign = createSigner({
-    key:       async () => eventData.rsaPrivateKey,  // PEM private key
+    key:       async () => eventData.rsaPrivateKey,
     algorithm: 'RS256',
     expiresIn: JWT_EXPIRY_SEC * 1000,
   });
 
-  const token = sign({
+  const token = await sign({
     jti,
     sub: userId,
     pk:  publicKey,
     eid: eventData.eventId,
   });
-  
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 5 — Fire-and-forget audit log (DO NOT AWAIT)
-  // ══════════════════════════════════════════════════════════════════════════
-  //
-  // TODO: Uncomment when Prisma models are ready:
-  //
-  //   prisma.queueAttempt.create({
-  //     data: {
-  //       saleEventId: event.id,   // TODO: pass event.id from Step 2 lookup
-  //       userId,
-  //       result: 'WON',
-  //       jti,
-  //     },
-  //   }).catch(err => console.error('[audit] QueueAttempt write failed:', err));
-  //
-  // By not awaiting this, we don't block the response.  The latency cost of
-  // a Postgres insert (~5-20ms) is NOT added to the user's response time.
-
-    // DO NOT AWAIT — Postgres latency (~5-20ms) must never block this response.
-  // If this write fails, user already won. Log and move on.
+  // DO NOT AWAIT — Postgres latency must never block this response.
   prisma.queueAttempt.create({
-    data: {
-      saleEventId: eventData.eventId,
-      userId,
-      result:      'WON',
-      jti,
-    },
+    data: { saleEventId: eventData.eventId, userId, result: 'WON', jti },
   }).catch(err => console.error('[audit] QueueAttempt write failed:', err));
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // STEP 6 — Respond
-  // ══════════════════════════════════════════════════════════════════════════
-
-  res.status(200).json({
-    result:    'WON',
-    token,
-    expiresIn: JWT_EXPIRY_SEC,
-  });
+  res.status(200).json({ status: 'WON', token });
 }
 
 // ── POST /api/queue/verify ────────────────────────────────────────────────────

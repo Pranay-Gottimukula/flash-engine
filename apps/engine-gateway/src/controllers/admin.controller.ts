@@ -60,11 +60,12 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
   //   }
   //   const { name, stockCount, rateLimit } = parsed.data;
 
-  const { clientId, name, stockCount, rateLimit = 50 } = req.body as {
-    clientId?:   string;
-    name?:       string;
-    stockCount?: number;
-    rateLimit?:  number;
+  const { clientId, name, stockCount, rateLimit = 50, oversubscriptionMultiplier = 1.5 } = req.body as {
+    clientId?:                   string;
+    name?:                       string;
+    stockCount?:                 number;
+    rateLimit?:                  number;
+    oversubscriptionMultiplier?: number;
   };
 
 
@@ -82,6 +83,14 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: '`rateLimit` must be between 1 and 10,000' });
     return;
   }
+
+  if (typeof oversubscriptionMultiplier !== 'number' ||
+      oversubscriptionMultiplier < 1.0 || oversubscriptionMultiplier > 3.0) {
+    res.status(400).json({ error: '`oversubscriptionMultiplier` must be between 1.0 and 3.0' });
+    return;
+  }
+
+  const queueCap = Math.ceil(stockCount * oversubscriptionMultiplier);
 
   const client = await prisma.client.findUnique({
     where:  { id: clientId },
@@ -139,6 +148,7 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
           name,
           stockCount,
           rateLimit,
+          oversubscriptionMultiplier,
           status:        'PENDING',
           publicKey:     eventPublicKey,
           rsaPrivateKey,
@@ -152,6 +162,7 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
         eventId:    created.id,
         stockCount,
         rateLimit,
+        queueCap,
       });
 
       return created;
@@ -212,8 +223,9 @@ async function seedRedis(params: {
   eventId:    string;
   stockCount: number;
   rateLimit:  number;
+  queueCap:   number;
 }): Promise<void> {
-  const { publicKey, eventId, stockCount, rateLimit } = params;
+  const { publicKey, eventId, stockCount, rateLimit, queueCap } = params;
   const key = `flash:event:${publicKey}`;
 
   // Check if already seeded — prevents overwrite on duplicate calls
@@ -233,6 +245,8 @@ async function seedRedis(params: {
   pipeline.hset(key, 'bucketTokens',     String(rateLimit));  // start full
   pipeline.hset(key, 'bucketLastRefill', String(Date.now()));
   pipeline.hset(key, 'eventId',          eventId);            // for audit log
+  pipeline.hset(key, 'admitted',         '0');
+  pipeline.hset(key, 'queueCap',         String(queueCap));
   pipeline.expire(key, 48 * 60 * 60);                         // 48hr TTL safety net
   await pipeline.exec();
 }
@@ -341,6 +355,8 @@ export async function endEvent(req: Request<{ id: string }>, res: Response): Pro
   const pipeline = redis.pipeline();
   pipeline.hset(`flash:event:${event.publicKey}`, 'status', 'ENDED');
   pipeline.expire(`flash:event:${event.publicKey}`, 48 * 60 * 60);
+  pipeline.del(`flash:queue:${event.publicKey}`);
+  pipeline.del(`flash:result:${event.publicKey}`);
   await pipeline.exec();
 
   // ── 3. Evict Node cache ───────────────────────────────────────────────────
