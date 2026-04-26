@@ -105,7 +105,7 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
       const pollUrl = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
       res.status(200).json({ status: 'ALREADY_JOINED', position: current.position, pollUrl });
     } else if (current.status === 'WON') {
-      current.tokenExpired
+      'tokenExpired' in current
         ? res.status(200).json({ status: 'WON', tokenExpired: true })
         : res.status(200).json({ status: 'WON', token: current.token });
     } else if (current.status === 'SOLD_OUT') {
@@ -194,7 +194,7 @@ export async function getQueueStatus(req: Request, res: Response): Promise<void>
   const current = await resolveUserStatus(pk, userId);
 
   if (current.status === 'WON') {
-    current.tokenExpired
+    'tokenExpired' in current
       ? res.status(200).json({ status: 'WON', tokenExpired: true })
       : res.status(200).json({ status: 'WON', token: current.token });
     return;
