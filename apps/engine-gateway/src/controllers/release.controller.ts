@@ -4,6 +4,7 @@ import { Request, Response } from 'express';
 import crypto                from 'crypto';
 import redis                 from '../services/redis.service';
 import prisma                from '../lib/prisma';
+import { getActiveDrains, startDrain } from '../services/drain.service';
 // getEventEntry is NOT called here — requireEventOwnership middleware runs
 // before this handler and attaches the validated event to res.locals.eventData.
 
@@ -197,6 +198,28 @@ export async function releaseTicket(req: Request, res: Response): Promise<void>{
     return;
   }
 
+  // ── Step 6b: Notify / restart drain if queue has waiting users ───────────────
+  //
+  // The drain loop processes the queue on its next 1-second tick automatically —
+  // no explicit poke is needed. We only need to restart it if it somehow stopped
+  // while users are still waiting (e.g., server restarted but initDrains missed
+  // this event, or a manual stopDrain was called).
+
+  const queueLen = await redis.zcard(`flash:queue:${publicKey}`);
+
+  if (queueLen > 0) {
+    console.log(`[release] Stock released, ${queueLen} users still in queue — drain loop will process.`);
+
+    if (!getActiveDrains().includes(publicKey)) {
+      const rawRateLimit = await redis.hget(redisKey, 'rateLimit');
+      const rateLimit    = parseInt(rawRateLimit ?? '50', 10);
+      startDrain(publicKey, rateLimit);
+      console.log(`[release] Drain was not running for ${publicKey} — restarted at ${rateLimit} users/sec`);
+    }
+  } else {
+    console.log(`[release] Stock released but queue is empty — stock will remain available until event ends.`);
+  }
+
   // ── Step 7: Log to TicketRelease (audit trail) ──────────────────────────────
   //
   // This is awaited (not fire-and-forget) because it's the duplicate-release
@@ -229,7 +252,16 @@ export async function releaseTicket(req: Request, res: Response): Promise<void>{
     return;
   }
 
-  // ── Step 8: Respond ──────────────────────────────────────────────────────────
+  // ── Step 8: Audit — fire-and-forget QueueAttempt for the released ticket ────
+  //
+  // Completes the audit trail: WON → RELEASED. The attempt.userId is available
+  // from the QueueAttempt lookup in Step 5.
+
+  prisma.queueAttempt.create({
+    data: { saleEventId: eventData.eventId, userId: attempt.userId, result: 'RELEASED', jti },
+  }).catch(err => console.error('[release/audit] QueueAttempt RELEASED write failed:', err));
+
+  // ── Step 9: Respond ──────────────────────────────────────────────────────────
 
   res.status(200).json({
     released: true,
