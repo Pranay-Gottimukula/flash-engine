@@ -164,28 +164,43 @@ export async function connectRedis(): Promise<void> {
 // TODO: Uncomment and implement once you have written the Lua script.
 //
 
-const LEAKY_BUCKET_LUA = readFileSync(
-  join(__dirname, '../scripts/leaky-bucket.lua'),
+const QUEUE_ADMISSION_LUA = readFileSync(
+  join(__dirname, '../scripts/queue-admission.lua'),
   'utf-8'
 );
 
 declare module 'ioredis' {
   interface Redis {
-    leakyBucket(
-      numkeys: number, 
-      key: string, 
-      nowMs: number
-    ): Promise<[number, string]>;
+    queueAdmission(
+      eventKey:  string,
+      queueKey:  string,
+      resultKey: string,
+      nowMs:     number,
+      userId:    string,
+    ): Promise<[number, string, number?]>;
   }
 }
 
-redis.defineCommand('leakyBucket', {
-  numberOfKeys: 1,
-  lua: LEAKY_BUCKET_LUA,   // import the .lua file or inline the string here
+redis.defineCommand('queueAdmission', {
+  numberOfKeys: 3,
+  lua: QUEUE_ADMISSION_LUA,
 });
 //
 // Call site (in queue.controller.ts):
-//   const [code, reason] = await redis.leakyBucket(1, `flash:event:${publicKey}`, Date.now());
+//   const { eventKey, queueKey, resultKey } = getRedisKeys(publicKey);
+//   const [code, reason, position] = await redis.queueAdmission(
+//     eventKey, queueKey, resultKey, Date.now(), userId,
+//   );
+
+// ── Key helpers ───────────────────────────────────────────────────────────────
+
+export function getRedisKeys(publicKey: string) {
+  return {
+    eventKey:  `flash:event:${publicKey}`,
+    queueKey:  `flash:queue:${publicKey}`,
+    resultKey: `flash:result:${publicKey}`,
+  };
+}
 
 // ── Export ────────────────────────────────────────────────────────────────────
 

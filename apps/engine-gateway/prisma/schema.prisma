@@ -28,8 +28,9 @@ model SaleEvent {
   clientId     String
   name         String
   stockCount   Int
-  rateLimit    Int      @default(50)
-  status       String   @default("PENDING")
+  rateLimit                  Int      @default(50)
+  oversubscriptionMultiplier Float    @default(1.5)
+  status                     String   @default("PENDING")
   publicKey    String   @unique
   
   // RS256 keypair — replaces secretKey
