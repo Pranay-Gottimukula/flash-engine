@@ -58,6 +58,7 @@ const SELECT_CLS = cn(
   'h-10 rounded-lg border border-border bg-surface-raised px-3 pr-8 text-sm text-text-primary',
   'outline-none transition-colors duration-150 focus:border-accent',
   'appearance-none cursor-pointer',
+  'focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base',
 );
 
 // ── Page ───────────────────────────────────────────────────────────────────────
@@ -164,7 +165,7 @@ export default function AdminEventsPage() {
   }
 
   return (
-    <>
+    <div className="animate-page-in">
       <PageHeader title="All Events" />
 
       {/* ── Filter bar ──────────────────────────────────────────────────── */}
@@ -235,6 +236,6 @@ export default function AdminEventsPage() {
           onRowClick={row => router.push(`/admin/events/${row.id as string}`)}
         />
       )}
-    </>
+    </div>
   );
 }

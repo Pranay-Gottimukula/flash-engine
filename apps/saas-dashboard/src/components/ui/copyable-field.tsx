@@ -50,7 +50,7 @@ export function CopyableField({
         <p className="flex items-center gap-1.5 text-xs text-yellow-400/80">{warning}</p>
       )}
 
-      <div className="relative overflow-hidden rounded-lg border border-border-subtle bg-[#0d0d0d]">
+      <div className="relative overflow-hidden rounded-lg border border-border-subtle bg-surface-base">
         {/* Action buttons pinned top-right */}
         <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5">
           {masked && (

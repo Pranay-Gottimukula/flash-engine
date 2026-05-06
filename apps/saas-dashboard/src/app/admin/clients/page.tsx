@@ -163,7 +163,7 @@ export default function AdminClientsPage() {
             className={cn(
               'rounded p-1.5 text-text-tertiary transition-colors',
               'hover:bg-green-500/10 hover:text-green-400',
-              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base',
             )}
           >
             <ShieldCheck size={15} />
@@ -176,7 +176,7 @@ export default function AdminClientsPage() {
             className={cn(
               'rounded p-1.5 text-text-tertiary transition-colors',
               'hover:bg-red-500/10 hover:text-red-400',
-              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base',
             )}
           >
             <Shield size={15} />
@@ -200,7 +200,7 @@ export default function AdminClientsPage() {
   }
 
   return (
-    <>
+    <div className="animate-page-in">
       <PageHeader
         title="Clients"
         description="Manage platform clients"
@@ -261,6 +261,6 @@ export default function AdminClientsPage() {
           </Button>
         </div>
       </Modal>
-    </>
+    </div>
   );
 }

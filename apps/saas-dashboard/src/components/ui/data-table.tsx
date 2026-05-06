@@ -57,9 +57,16 @@ export function DataTable<T extends Record<string, unknown>>({
                 key={col.key}
                 className={cn(
                   'px-4 py-3 text-left text-xs font-medium text-text-secondary',
-                  col.sortable && 'cursor-pointer select-none transition-colors hover:text-text-primary',
+                  col.sortable && [
+                    'cursor-pointer select-none transition-colors hover:text-text-primary',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset',
+                  ],
                 )}
+                tabIndex={col.sortable ? 0 : undefined}
                 onClick={col.sortable ? () => handleSort(col.key) : undefined}
+                onKeyDown={col.sortable ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSort(col.key); }
+                } : undefined}
               >
                 <div className="flex items-center gap-1.5">
                   {col.label}
@@ -93,9 +100,16 @@ export function DataTable<T extends Record<string, unknown>>({
                 key={i}
                 className={cn(
                   'border-t border-border-subtle',
-                  onRowClick && 'cursor-pointer transition-colors hover:bg-surface-raised',
+                  onRowClick && [
+                    'cursor-pointer transition-colors hover:bg-surface-raised',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset',
+                  ],
                 )}
+                tabIndex={onRowClick ? 0 : undefined}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
+                onKeyDown={onRowClick ? (e) => {
+                  if (e.key === 'Enter') onRowClick(row);
+                } : undefined}
               >
                 {columns.map(col => (
                   <td key={col.key} className="px-4 py-3 text-text-primary">

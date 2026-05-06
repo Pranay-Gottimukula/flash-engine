@@ -37,15 +37,15 @@ export function useToast(): ToastAPI {
 
 const variantStyles: Record<ToastVariant, { outer: string; icon: ReactNode }> = {
   success: {
-    outer: 'border-green-500/20 bg-[#0d1a0f] text-green-400',
+    outer: 'border-green-500/20 bg-green-500/10 text-green-400',
     icon:  <Check   size={15} className="shrink-0" />,
   },
   error: {
-    outer: 'border-red-500/20 bg-[#1a0d0d] text-red-400',
+    outer: 'border-red-500/20 bg-red-500/10 text-red-400',
     icon:  <XCircle size={15} className="shrink-0" />,
   },
   info: {
-    outer: 'border-blue-500/20 bg-[#0d0f1a] text-blue-400',
+    outer: 'border-blue-500/20 bg-blue-500/10 text-blue-400',
     icon:  <Info    size={15} className="shrink-0" />,
   },
 };

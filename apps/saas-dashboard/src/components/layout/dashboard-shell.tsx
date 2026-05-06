@@ -1,13 +1,23 @@
 'use client';
 
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { Menu } from 'lucide-react';
 import { Sidebar } from './sidebar';
+import { useAuth } from '@/lib/auth-context';
 
 export function DashboardShell({ children }: { children: ReactNode }) {
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const closeMobile = useCallback(() => setMobileOpen(false), []);
+
+  useEffect(() => {
+    if (!isLoading && !user) router.replace('/login');
+  }, [isLoading, user, router]);
+
+  if (isLoading || !user) return null;
 
   return (
     <div className="flex">

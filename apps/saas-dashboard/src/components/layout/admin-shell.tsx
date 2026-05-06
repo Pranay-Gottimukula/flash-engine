@@ -14,9 +14,9 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const closeMobile = useCallback(() => setMobileOpen(false), []);
 
   useEffect(() => {
-    if (!isLoading && user?.role !== 'SUPER_ADMIN') {
-      router.replace('/dashboard');
-    }
+    if (isLoading) return;
+    if (!user) router.replace('/login');
+    else if (user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
   }, [isLoading, user, router]);
 
   if (isLoading || user?.role !== 'SUPER_ADMIN') return null;

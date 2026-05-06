@@ -208,7 +208,7 @@ export default function EventDetailPage() {
       <div className="mt-8">
         <Link
           href="/dashboard"
-          className="inline-flex items-center gap-1.5 text-sm text-text-tertiary transition-colors hover:text-text-secondary"
+          className="inline-flex items-center gap-1.5 rounded text-sm text-text-tertiary transition-colors hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
         >
           <ArrowLeft size={14} />
           Back to events

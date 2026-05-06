@@ -80,7 +80,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex justify-center py-20">
+      <div className="flex h-[60vh] items-center justify-center">
         <Spinner size="md" className="text-text-tertiary" />
       </div>
     );
@@ -91,7 +91,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <>
+    <div className="animate-page-in">
       {/* ── Overview stats ─────────────────────────────────────────────── */}
       <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
@@ -138,7 +138,7 @@ export default function DashboardPage() {
             >
               <Card
                 interactive
-                className="transition-[border-color] duration-150 group-hover:border-[rgba(255,255,255,0.2)]"
+                className="transition-[border-color] duration-150 group-hover:border-border-strong"
               >
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-2">
@@ -159,6 +159,6 @@ export default function DashboardPage() {
           ))}
         </div>
       )}
-    </>
+    </div>
   );
 }

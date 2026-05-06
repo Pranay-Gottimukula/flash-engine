@@ -176,7 +176,7 @@ export default function AdminEventDetailPage() {
               by{' '}
               <Link
                 href="/admin/clients"
-                className="text-text-secondary transition-colors hover:text-text-primary"
+                className="rounded text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
               >
                 {event.clientEmail}
               </Link>
@@ -186,7 +186,7 @@ export default function AdminEventDetailPage() {
           {/* Back link */}
           <Link
             href="/admin/events"
-            className="inline-flex items-center gap-1.5 text-sm text-text-tertiary transition-colors hover:text-text-secondary"
+            className="inline-flex items-center gap-1.5 rounded text-sm text-text-tertiary transition-colors hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
           >
             <ArrowLeft size={14} />
             All events
@@ -205,7 +205,7 @@ export default function AdminEventDetailPage() {
             <p className="text-sm font-semibold text-text-primary">Client Info</p>
             <Link
               href="/admin/clients"
-              className="inline-flex items-center gap-1 text-xs text-text-tertiary transition-colors hover:text-text-secondary"
+              className="inline-flex items-center gap-1 rounded text-xs text-text-tertiary transition-colors hover:text-text-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
             >
               View client
               <ExternalLink size={11} />

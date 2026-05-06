@@ -103,7 +103,7 @@ function MetricGrid({ cols = 2, children }: { cols?: number; children: ReactNode
   return (
     <div className={cn(
       'grid gap-x-6 gap-y-4',
-      cols === 2 ? 'grid-cols-2' : 'grid-cols-3',
+      cols === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3',
     )}>
       {children}
     </div>
@@ -163,7 +163,7 @@ export default function SystemHealthPage() {
   );
 
   return (
-    <>
+    <div className="animate-page-in">
       <PageHeader title="System Health" action={refreshAction} />
 
       {/* Stale-data error banner */}
@@ -267,6 +267,6 @@ export default function SystemHealthPage() {
           Last updated at {fmtTime(updatedAt)}
         </p>
       )}
-    </>
+    </div>
   );
 }

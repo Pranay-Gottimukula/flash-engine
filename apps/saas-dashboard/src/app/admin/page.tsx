@@ -183,7 +183,7 @@ export default function AdminOverviewPage() {
   ];
 
   return (
-    <>
+    <div className="animate-page-in">
       {/* ── Page header ─────────────────────────────────────────────────── */}
       <div className="mb-8 flex items-center justify-between border-b border-border-subtle pb-6">
         <div className="flex items-center gap-3">
@@ -246,7 +246,7 @@ export default function AdminOverviewPage() {
 
       {/* ── Last 24 hours ───────────────────────────────────────────────── */}
       <Card header={<h2 className="text-sm font-semibold text-text-primary">Last 24 Hours</h2>}>
-        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
           <MiniStat label="Events Created" value={h24.eventsCreated} />
           <MiniStat label="Total Requests" value={h24.totalRequests.toLocaleString()} />
           <MiniStat label="Won"            value={h24.byResult.WON.toLocaleString()} />
@@ -255,6 +255,6 @@ export default function AdminOverviewPage() {
           <MiniStat label="Rate Limited"   value={h24.byResult.RATE_LIMITED.toLocaleString()} />
         </div>
       </Card>
-    </>
+    </div>
   );
 }
