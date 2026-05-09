@@ -3,10 +3,11 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { Zap } from 'lucide-react';
-import { Card }   from '@/components/ui/card';
-import { Input }  from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { useAuth } from '@/lib/auth-context';
+import { Card }        from '@/components/ui/card';
+import { Input }       from '@/components/ui/input';
+import { Button }      from '@/components/ui/button';
+import { ErrorBanner } from '@/components/ui/error-banner';
+import { useAuth }     from '@/lib/auth-context';
 
 function validateForm(email: string, password: string, confirm: string): string {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Enter a valid email address.';
@@ -18,6 +19,7 @@ function validateForm(email: string, password: string, confirm: string): string 
 export default function SignupPage() {
   const { signup } = useAuth();
 
+  const [name,     setName]     = useState('');
   const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
   const [confirm,  setConfirm]  = useState('');
@@ -33,13 +35,15 @@ export default function SignupPage() {
     setError('');
     setLoading(true);
     try {
-      await signup(email, password);
+      await signup(email, password, name.trim() || undefined);
+      // redirect is handled inside signup() based on user role
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Account creation failed. Please try again.');
-    } finally {
       setLoading(false);
     }
   }
+
+  function clearError() { setError(''); }
 
   return (
     <Card className="relative z-10 w-full max-w-sm">
@@ -59,12 +63,20 @@ export default function SignupPage() {
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <Input
+            label="Name (optional)"
+            type="text"
+            placeholder="Jane Smith"
+            autoComplete="name"
+            value={name}
+            onChange={e => { setName(e.target.value); clearError(); }}
+          />
+          <Input
             label="Email"
             type="email"
             placeholder="you@company.com"
             autoComplete="email"
             value={email}
-            onChange={e => { setEmail(e.target.value); setError(''); }}
+            onChange={e => { setEmail(e.target.value); clearError(); }}
             required
           />
           <Input
@@ -73,7 +85,7 @@ export default function SignupPage() {
             placeholder="Min. 8 characters"
             autoComplete="new-password"
             value={password}
-            onChange={e => { setPassword(e.target.value); setError(''); }}
+            onChange={e => { setPassword(e.target.value); clearError(); }}
             required
           />
           <Input
@@ -82,15 +94,11 @@ export default function SignupPage() {
             placeholder="••••••••"
             autoComplete="new-password"
             value={confirm}
-            onChange={e => { setConfirm(e.target.value); setError(''); }}
+            onChange={e => { setConfirm(e.target.value); clearError(); }}
             required
           />
 
-          {error && (
-            <p role="alert" className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
-              {error}
-            </p>
-          )}
+          {error && <ErrorBanner message={error} />}
 
           <Button type="submit" loading={loading} className="w-full">
             Create account

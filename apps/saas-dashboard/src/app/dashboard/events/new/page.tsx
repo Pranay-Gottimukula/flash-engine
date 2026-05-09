@@ -19,12 +19,13 @@ interface CreateEventResponse {
 export default function CreateEventPage() {
   const router   = useRouter();
   const { user } = useAuth();
-  const { toast } = useToast();
+  const toast = useToast();
 
   const [name,       setName]       = useState('');
   const [stockCount, setStockCount] = useState('');
   const [rateLimit,  setRateLimit]  = useState('50');
   const [multiplier, setMultiplier] = useState('1.5');
+  const [webhookUrl, setWebhookUrl] = useState('');
   const [error,      setError]      = useState('');
   const [loading,    setLoading]    = useState(false);
 
@@ -36,14 +37,17 @@ export default function CreateEventPage() {
     setLoading(true);
 
     try {
-      const event = await api.post<CreateEventResponse>('/api/admin/events', {
+      const body: Record<string, unknown> = {
         clientId:                   user.id,
         name:                       name.trim(),
         stockCount:                 Number(stockCount),
         rateLimit:                  Number(rateLimit),
         oversubscriptionMultiplier: Number(multiplier),
-      });
-      toast('Event created successfully');
+      };
+      if (webhookUrl.trim()) body.webhookUrl = webhookUrl.trim();
+
+      const event = await api.post<CreateEventResponse>('/api/admin/events', body);
+      toast.success('Event created');
       router.push(`/dashboard/events/${event.id}`);
     } catch (err) {
       setError(toErrorMessage(err));
@@ -93,7 +97,7 @@ export default function CreateEventPage() {
                 required
               />
               <p className="text-xs text-text-tertiary">
-                Maximum winners per second. Controls how fast users reach your checkout.
+                Maximum winners per second reaching your checkout.
               </p>
             </div>
 
@@ -110,14 +114,24 @@ export default function CreateEventPage() {
                 required
               />
               <p className="text-xs text-text-tertiary">
-                Queue capacity = Stock × Multiplier. Higher values keep more users in queue for potential stock releases.
+                Queue capacity = Stock × Multiplier.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Input
+                label="Webhook URL"
+                type="url"
+                placeholder="https://yourstore.com/webhook"
+                value={webhookUrl}
+                onChange={e => setWebhookUrl(e.target.value)}
+              />
+              <p className="text-xs text-text-tertiary">
+                Get notified when event status changes. Optional.
               </p>
             </div>
 
             <div className="flex gap-3 pt-2">
-              <Button type="submit" loading={loading} className="flex-1">
-                Create Event
-              </Button>
               <Button
                 type="button"
                 variant="ghost"
@@ -125,6 +139,9 @@ export default function CreateEventPage() {
                 onClick={() => router.push('/dashboard')}
               >
                 Cancel
+              </Button>
+              <Button type="submit" loading={loading} className="flex-1">
+                Create Event
               </Button>
             </div>
 

@@ -18,5 +18,7 @@ export function relativeTime(date: string | Date): string {
     return `${h} ${h === 1 ? 'hour' : 'hours'} ago`;
   }
   const d = Math.floor(seconds / 86400);
-  return `${d} ${d === 1 ? 'day' : 'days'} ago`;
+  if (d < 30) return `${d} ${d === 1 ? 'day' : 'days'} ago`;
+  const m = Math.floor(d / 30);
+  return `${m} ${m === 1 ? 'month' : 'months'} ago`;
 }

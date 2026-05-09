@@ -4,12 +4,12 @@ import {
   createContext, useCallback, useContext, useEffect,
   useState, type ReactNode,
 } from 'react';
-import { Check, X, XCircle } from 'lucide-react';
+import { Check, Info, X, XCircle } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type ToastVariant = 'success' | 'error';
+export type ToastVariant = 'success' | 'error' | 'info';
 
 interface ToastItem {
   id:      string;
@@ -17,42 +17,61 @@ interface ToastItem {
   variant: ToastVariant;
 }
 
-interface ToastContextValue {
-  toast: (message: string, variant?: ToastVariant) => void;
+export interface ToastAPI {
+  success: (message: string) => void;
+  error:   (message: string) => void;
+  info:    (message: string) => void;
 }
 
-// ── Context ───────────────────────────────────────────────────────────────────
+const ToastContext = createContext<ToastAPI>({
+  success: () => {},
+  error:   () => {},
+  info:    () => {},
+});
 
-const ToastContext = createContext<ToastContextValue>({ toast: () => {} });
-
-export function useToast() {
+export function useToast(): ToastAPI {
   return useContext(ToastContext);
 }
 
-// ── Single toast ──────────────────────────────────────────────────────────────
+// ── Variant styles ────────────────────────────────────────────────────────────
 
-function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: string) => void }) {
+const variantStyles: Record<ToastVariant, { outer: string; icon: ReactNode }> = {
+  success: {
+    outer: 'border-green-500/20 bg-green-500/10 text-green-400',
+    icon:  <Check   size={15} className="shrink-0" />,
+  },
+  error: {
+    outer: 'border-red-500/20 bg-red-500/10 text-red-400',
+    icon:  <XCircle size={15} className="shrink-0" />,
+  },
+  info: {
+    outer: 'border-blue-500/20 bg-blue-500/10 text-blue-400',
+    icon:  <Info    size={15} className="shrink-0" />,
+  },
+};
+
+// ── Single toast item ─────────────────────────────────────────────────────────
+
+function ToastItem({ item, onDismiss }: { item: ToastItem; onDismiss: (id: string) => void }) {
   useEffect(() => {
     const t = setTimeout(() => onDismiss(item.id), 3000);
     return () => clearTimeout(t);
   }, [item.id, onDismiss]);
+
+  const { outer, icon } = variantStyles[item.variant];
 
   return (
     <div
       role="status"
       aria-live="polite"
       className={cn(
-        'animate-page-in flex min-w-[240px] max-w-sm items-center gap-3',
-        'rounded-lg border px-4 py-3 text-sm shadow-xl',
-        item.variant === 'success'
-          ? 'border-green-500/20 bg-[#0d1a0f] text-green-400'
-          : 'border-red-500/20   bg-[#1a0d0d] text-red-400',
+        'flex min-w-[240px] max-w-sm items-center gap-3',
+        'rounded-lg border px-4 py-3 text-sm',
+        'toast-slide-in',
+        outer,
       )}
     >
-      {item.variant === 'success'
-        ? <Check    size={15} className="shrink-0" />
-        : <XCircle  size={15} className="shrink-0" />
-      }
+      {icon}
       <span className="flex-1">{item.message}</span>
       <button
         onClick={() => onDismiss(item.id)}
@@ -74,19 +93,25 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
-  const toast = useCallback((message: string, variant: ToastVariant = 'success') => {
+  const push = useCallback((message: string, variant: ToastVariant) => {
     setToasts(prev => [
       ...prev,
       { id: `${Date.now()}-${Math.random()}`, message, variant },
     ]);
   }, []);
 
+  const api: ToastAPI = {
+    success: (msg) => push(msg, 'success'),
+    error:   (msg) => push(msg, 'error'),
+    info:    (msg) => push(msg, 'info'),
+  };
+
   return (
-    <ToastContext.Provider value={{ toast }}>
+    <ToastContext.Provider value={api}>
       {children}
       <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
         {toasts.map(item => (
-          <Toast key={item.id} item={item} onDismiss={dismiss} />
+          <ToastItem key={item.id} item={item} onDismiss={dismiss} />
         ))}
       </div>
     </ToastContext.Provider>

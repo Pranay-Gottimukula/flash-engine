@@ -13,15 +13,19 @@ import Cookies from 'js-cookie';
 import { api, AUTH_TOKEN_COOKIE } from './api';
 
 export interface Client {
-  id:    string;
-  email: string;
+  id:        string;
+  email:     string;
+  name?:     string;
+  role:      string;
+  publicKey: string;
+  createdAt: string;
 }
 
 interface AuthContextValue {
   user:      Client | null;
   isLoading: boolean;
   login:     (email: string, password: string) => Promise<void>;
-  signup:    (email: string, password: string) => Promise<void>;
+  signup:    (email: string, password: string, name?: string) => Promise<void>;
   logout:    () => void;
 }
 
@@ -32,13 +36,15 @@ interface AuthResponse {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function redirectForRole(role: string, router: ReturnType<typeof useRouter>) {
+  router.push(role === 'SUPER_ADMIN' ? '/admin' : '/dashboard');
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [user,      setUser]      = useState<Client | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // On mount: validate any stored token by calling /api/auth/me.
-  // If the call fails (expired, invalid), wipe the cookie.
   useEffect(() => {
     const token = Cookies.get(AUTH_TOKEN_COOKIE);
     if (!token) {
@@ -55,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const persistAuth = useCallback((token: string, client: Client) => {
     Cookies.set(AUTH_TOKEN_COOKIE, token, {
-      expires:  7,          // 7-day session
+      expires:  7,
       sameSite: 'strict',
       secure:   process.env.NODE_ENV === 'production',
     });
@@ -65,13 +71,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const { token, client } = await api.post<AuthResponse>('/api/auth/login', { email, password });
     persistAuth(token, client);
-    router.push('/dashboard');
+    redirectForRole(client.role, router);
   }, [persistAuth, router]);
 
-  const signup = useCallback(async (email: string, password: string) => {
-    const { token, client } = await api.post<AuthResponse>('/api/auth/signup', { email, password });
+  const signup = useCallback(async (email: string, password: string, name?: string) => {
+    const { token, client } = await api.post<AuthResponse>('/api/auth/signup', { email, password, name });
     persistAuth(token, client);
-    router.push('/dashboard');
+    redirectForRole(client.role, router);
   }, [persistAuth, router]);
 
   const logout = useCallback(() => {

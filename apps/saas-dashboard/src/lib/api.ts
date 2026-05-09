@@ -2,7 +2,7 @@ import Cookies from 'js-cookie';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
 
-export const AUTH_TOKEN_COOKIE = 'auth_token';
+export const AUTH_TOKEN_COOKIE = 'flash_token';
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const token = Cookies.get(AUTH_TOKEN_COOKIE);
@@ -34,6 +34,16 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   const json = await res.json().catch(() => ({}));
 
+  if (res.status === 403) {
+    const msg = (json as { error?: string; message?: string }).error
+      ?? (json as { message?: string }).message
+      ?? '';
+    if (msg.toLowerCase().includes('suspended') && typeof window !== 'undefined') {
+      window.location.href = '/suspended';
+    }
+    throw new Error(msg || 'Forbidden');
+  }
+
   if (!res.ok) {
     throw new Error((json as { error?: string; message?: string }).error
       ?? (json as { message?: string }).message
@@ -44,8 +54,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
-  get:    <T>(path: string)                  => request<T>('GET',    path),
-  post:   <T>(path: string, body?: unknown)  => request<T>('POST',   path, body),
-  put:    <T>(path: string, body?: unknown)  => request<T>('PUT',    path, body),
-  delete: <T>(path: string)                  => request<T>('DELETE', path),
+  get:    <T>(path: string)                 => request<T>('GET',    path),
+  post:   <T>(path: string, body?: unknown) => request<T>('POST',   path, body),
+  put:    <T>(path: string, body?: unknown) => request<T>('PUT',    path, body),
+  delete: <T>(path: string)                => request<T>('DELETE', path),
 };

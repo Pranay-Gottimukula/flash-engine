@@ -3,10 +3,11 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { Zap } from 'lucide-react';
-import { Card }   from '@/components/ui/card';
-import { Input }  from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { useAuth } from '@/lib/auth-context';
+import { Card }        from '@/components/ui/card';
+import { Input }       from '@/components/ui/input';
+import { Button }      from '@/components/ui/button';
+import { ErrorBanner } from '@/components/ui/error-banner';
+import { useAuth }     from '@/lib/auth-context';
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -22,9 +23,9 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
+      // redirect is handled inside login() based on user role
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign in failed. Please try again.');
-    } finally {
       setLoading(false);
     }
   }
@@ -65,11 +66,7 @@ export default function LoginPage() {
             required
           />
 
-          {error && (
-            <p role="alert" className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-400">
-              {error}
-            </p>
-          )}
+          {error && <ErrorBanner message={error} />}
 
           <Button type="submit" loading={loading} className="w-full">
             Sign in

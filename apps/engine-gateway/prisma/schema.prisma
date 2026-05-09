@@ -44,6 +44,7 @@ model SaleEvent {
   signingSecret  String
   
   webhookUrl   String?
+  activatedAt  DateTime?
   endedAt      DateTime?
   createdAt    DateTime @default(now())
 

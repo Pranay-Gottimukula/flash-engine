@@ -457,7 +457,7 @@ export async function activateEvent(req: Request<{ id: string }>, res: Response)
   try {
     await prisma.saleEvent.update({
       where: { id },
-      data:  { status: 'ACTIVE' },
+      data:  { status: 'ACTIVE', activatedAt: new Date() },
     });
   } catch (err) {
     console.error('[activateEvent] Postgres update failed:', err);
@@ -529,6 +529,9 @@ export async function getEventStats(req: Request<{ id: string }>, res: Response)
     attemptCounts,
     releaseCounts,
     usedJtiCount,
+    firstWinner,
+    firstSoldOut,
+    lastRelease,
   ] = await Promise.all([
     redis.hmget(eventKey, 'stock', 'admitted', 'queueCap', 'status'),
     redis.zcard(queueKey),
@@ -543,6 +546,21 @@ export async function getEventStats(req: Request<{ id: string }>, res: Response)
       _count: { _all: true },
     }),
     prisma.usedJti.count({ where: { saleEventId: id } }),
+    prisma.queueAttempt.findFirst({
+      where:   { saleEventId: id, result: 'WON' },
+      orderBy: { createdAt: 'asc' },
+      select:  { createdAt: true },
+    }),
+    prisma.queueAttempt.findFirst({
+      where:   { saleEventId: id, result: 'SOLD_OUT' },
+      orderBy: { createdAt: 'asc' },
+      select:  { createdAt: true },
+    }),
+    prisma.ticketRelease.findFirst({
+      where:   { saleEventId: id },
+      orderBy: { releasedAt: 'desc' },
+      select:  { releasedAt: true },
+    }),
   ]);
 
   const [stockStr, admittedStr, queueCapStr] = redisFields;
@@ -580,6 +598,14 @@ export async function getEventStats(req: Request<{ id: string }>, res: Response)
     rates: {
       conversionRate: won > 0 ? verified / won : 0,
       releaseRate:    won > 0 ? released / won : 0,
+    },
+    timeline: {
+      created:       event.createdAt,
+      activated:     event.activatedAt    ?? null,
+      firstWinner:   firstWinner?.createdAt  ?? null,
+      stockDepleted: firstSoldOut?.createdAt ?? null,
+      lastRelease:   lastRelease?.releasedAt ?? null,
+      ended:         event.endedAt        ?? null,
     },
   });
 }
@@ -678,7 +704,7 @@ export async function resumeEvent(req: Request<{ id: string }>, res: Response): 
   try {
     updatedEvent = await prisma.saleEvent.update({
       where: { id },
-      data:  { status: 'ACTIVE' },
+      data:  { status: 'ACTIVE', activatedAt: new Date() },
     });
   } catch (err) {
     console.error('[resumeEvent] Postgres update failed:', err);
@@ -749,5 +775,157 @@ export async function endEvent(req: Request<{ id: string }>, res: Response): Pro
     message: 'Event ended. Queue is closed.',
     id:      event.id,
     status:  'ENDED',
+  });
+}
+
+// ── GET /api/admin/overview ───────────────────────────────────────────────────
+//
+// Aggregate metrics for the authenticated CLIENT's own account.
+
+export async function getClientOverview(req: Request, res: Response): Promise<void> {
+  const clientId = res.locals.client.id;
+
+  const events = await prisma.saleEvent.findMany({
+    where:  { clientId },
+    select: { id: true, status: true, stockCount: true },
+  });
+
+  const totalEvents = events.length;
+  const endedEvents = events.filter(e => e.status === 'ENDED');
+
+  const totalUsersProcessed = await prisma.queueAttempt.count({
+    where: { saleEvent: { clientId } },
+  });
+
+  let averageConversionRate: number | null = null;
+  let averageStockUtilization: number | null = null;
+
+  if (endedEvents.length > 0) {
+    const endedIds = endedEvents.map(e => e.id);
+
+    const [wonCounts, usedJtiCounts] = await Promise.all([
+      prisma.queueAttempt.groupBy({
+        by:    ['saleEventId'],
+        where: { saleEventId: { in: endedIds }, result: 'WON' },
+        _count: { _all: true },
+      }),
+      prisma.usedJti.groupBy({
+        by:    ['saleEventId'],
+        where: { saleEventId: { in: endedIds } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const wonMap     = new Map(wonCounts.map(r     => [r.saleEventId, r._count._all]));
+    const usedJtiMap = new Map(usedJtiCounts.map(r => [r.saleEventId, r._count._all]));
+
+    let totalConvRate = 0;
+    let totalStockUtil = 0;
+
+    for (const event of endedEvents) {
+      const usedJtis = usedJtiMap.get(event.id) ?? 0;
+      const won      = wonMap.get(event.id)      ?? 0;
+      totalConvRate  += won > 0              ? usedJtis / won              : 0;
+      totalStockUtil += event.stockCount > 0 ? usedJtis / event.stockCount : 0;
+    }
+
+    averageConversionRate    = totalConvRate  / endedEvents.length;
+    averageStockUtilization  = totalStockUtil / endedEvents.length;
+  }
+
+  res.status(200).json({
+    totalEvents,
+    totalUsersProcessed,
+    averageConversionRate,
+    averageStockUtilization,
+  });
+}
+
+// ── POST /api/admin/events/:id/duplicate ──────────────────────────────────────
+//
+// Creates a PENDING copy of an existing event with a fresh keypair.
+
+export async function duplicateEvent(req: Request<{ id: string }>, res: Response): Promise<void> {
+  const { id } = req.params;
+  const authClient = res.locals.client;
+
+  const source = await prisma.saleEvent.findUnique({ where: { id } });
+  if (!source) {
+    res.status(404).json({ error: 'Event not found' });
+    return;
+  }
+
+  if (authClient && authClient.role !== 'SUPER_ADMIN' && source.clientId !== authClient.id) {
+    res.status(403).json({ error: 'Not your event' });
+    return;
+  }
+
+  const clientId       = authClient?.id ?? source.clientId;
+  const eventPublicKey = `pk_live_${crypto.randomBytes(32).toString('hex')}`;
+  const signingSecret  = `ss_live_${crypto.randomBytes(32).toString('hex')}`;
+
+  let rsaPrivateKey: string;
+  let rsaPublicKey: string;
+
+  try {
+    const keypair = await generateKeyPairAsync('rsa', {
+      modulusLength:      2048,
+      publicKeyEncoding:  { type: 'spki',  format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
+    rsaPrivateKey = keypair.privateKey as unknown as string;
+    rsaPublicKey  = keypair.publicKey  as unknown as string;
+  } catch (err) {
+    console.error('[admin/duplicateEvent] Key generation failed:', err);
+    res.status(500).json({ error: 'Failed to generate cryptographic keys' });
+    return;
+  }
+
+  const queueCap = Math.ceil(source.stockCount * source.oversubscriptionMultiplier);
+
+  let event: Awaited<ReturnType<typeof prisma.saleEvent.create>>;
+  try {
+    event = await prisma.$transaction(async (tx) => {
+      const created = await tx.saleEvent.create({
+        data: {
+          clientId,
+          name:                       `${source.name} (copy)`,
+          stockCount:                 source.stockCount,
+          rateLimit:                  source.rateLimit,
+          oversubscriptionMultiplier: source.oversubscriptionMultiplier,
+          webhookUrl:                 source.webhookUrl,
+          status:                     'PENDING',
+          publicKey:                  eventPublicKey,
+          rsaPrivateKey,
+          rsaPublicKey,
+          signingSecret,
+        },
+      });
+
+      await seedRedis({
+        publicKey:  eventPublicKey,
+        eventId:    created.id,
+        stockCount: source.stockCount,
+        rateLimit:  source.rateLimit,
+        queueCap,
+      });
+
+      return created;
+    });
+  } catch (err) {
+    console.error('[admin/duplicateEvent] Transaction failed:', err);
+    res.status(500).json({ error: 'Failed to duplicate event' });
+    return;
+  }
+
+  res.status(201).json({
+    message:       'Event duplicated. Store signingSecret securely — it will not be shown again.',
+    id:            event.id,
+    name:          event.name,
+    status:        event.status,
+    publicKey:     eventPublicKey,
+    signingSecret,
+    rsaPublicKey,
+    jwksUrl:       `${process.env.ENGINE_URL}/api/.well-known/jwks/${eventPublicKey}`,
   });
 }

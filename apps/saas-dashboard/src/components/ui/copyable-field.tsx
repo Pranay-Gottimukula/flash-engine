@@ -10,6 +10,7 @@ interface CopyableFieldProps {
   multiline?:       boolean;
   defaultExpanded?: boolean;
   masked?:          boolean;
+  mono?:            boolean;
   warning?:         string;
   className?:       string;
 }
@@ -20,6 +21,7 @@ export function CopyableField({
   multiline,
   defaultExpanded = false,
   masked,
+  mono = true,
   warning,
   className,
 }: CopyableFieldProps) {
@@ -48,7 +50,7 @@ export function CopyableField({
         <p className="flex items-center gap-1.5 text-xs text-yellow-400/80">{warning}</p>
       )}
 
-      <div className="relative overflow-hidden rounded-lg border border-border-subtle bg-[#0d0d0d]">
+      <div className="relative overflow-hidden rounded-lg border border-border-subtle bg-surface-base">
         {/* Action buttons pinned top-right */}
         <div className="absolute right-2 top-2 z-10 flex items-center gap-0.5">
           {masked && (
@@ -80,7 +82,8 @@ export function CopyableField({
           multiline && !expanded && 'max-h-[5rem]',
         )}>
           <pre className={cn(
-            'font-mono text-xs leading-relaxed break-all whitespace-pre-wrap text-text-primary',
+            'text-xs leading-relaxed break-all whitespace-pre-wrap text-text-primary',
+            mono && 'font-mono',
             masked && !revealed && 'tracking-[0.2em] text-text-tertiary',
           )}>
             {display}

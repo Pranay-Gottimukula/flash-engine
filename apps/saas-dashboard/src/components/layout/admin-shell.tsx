@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Menu } from 'lucide-react';
-import { Sidebar } from './sidebar';
+import { AdminSidebar } from './admin-sidebar';
 import { useAuth } from '@/lib/auth-context';
 
-export function DashboardShell({ children }: { children: ReactNode }) {
+export function AdminShell({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -14,14 +14,15 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   const closeMobile = useCallback(() => setMobileOpen(false), []);
 
   useEffect(() => {
-    if (!isLoading && !user) router.replace('/login');
+    if (isLoading) return;
+    if (!user) router.replace('/login');
+    else if (user.role !== 'SUPER_ADMIN') router.replace('/dashboard');
   }, [isLoading, user, router]);
 
-  if (isLoading || !user) return null;
+  if (isLoading || user?.role !== 'SUPER_ADMIN') return null;
 
   return (
     <div className="flex">
-      {/* Mobile backdrop */}
       {mobileOpen && (
         <div
           className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
@@ -29,10 +30,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         />
       )}
 
-      <Sidebar mobileOpen={mobileOpen} onMobileClose={closeMobile} />
+      <AdminSidebar mobileOpen={mobileOpen} onMobileClose={closeMobile} />
 
       <main className="min-h-screen flex-1 overflow-auto">
-        {/* Mobile top bar — hidden on desktop */}
         <div className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border-subtle bg-surface-base px-4 md:hidden">
           <button
             onClick={() => setMobileOpen(true)}
@@ -42,6 +42,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             <Menu size={18} />
           </button>
           <span className="text-sm font-semibold text-text-primary">FlashEngine</span>
+          <span className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest bg-orange-500/15 text-orange-400 ring-1 ring-orange-500/30">
+            Admin
+          </span>
         </div>
 
         <div className="animate-page-in mx-auto max-w-[1200px] px-4 py-6 md:px-8 md:py-8">
