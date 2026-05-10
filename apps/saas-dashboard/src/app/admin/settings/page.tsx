@@ -5,8 +5,7 @@ import { PageHeader }    from '@/components/layout/page-header';
 import { Badge }         from '@/components/ui/badge';
 import { CopyableField } from '@/components/ui/copyable-field';
 
-const API_URL      = process.env.NEXT_PUBLIC_API_URL      ?? 'http://localhost:3000';
-const ADMIN_SECRET = process.env.NEXT_PUBLIC_ADMIN_SECRET ?? '';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
 
 export default function AdminSettingsPage() {
   const { user } = useAuth();
@@ -44,8 +43,7 @@ export default function AdminSettingsPage() {
             Configuration
           </p>
           <div className="space-y-4">
-            <CopyableField label="API URL"      value={API_URL} />
-            <CopyableField label="Admin Secret" value={ADMIN_SECRET} masked />
+            <CopyableField label="API URL" value={API_URL} />
           </div>
         </section>
 

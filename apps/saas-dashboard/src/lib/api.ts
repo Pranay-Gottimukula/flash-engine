@@ -10,11 +10,6 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const adminSecret = process.env.NEXT_PUBLIC_ADMIN_SECRET;
-  if (adminSecret && path.startsWith('/api/admin')) {
-    headers['x-admin-secret'] = adminSecret;
-  }
-
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
     headers,

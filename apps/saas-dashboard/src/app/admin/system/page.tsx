@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
 import { toErrorMessage } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/page-header';
@@ -15,41 +15,27 @@ import { cn } from '@/lib/cn';
 
 interface HealthResponse {
   redis: {
-    status:             'connected' | 'disconnected';
-    memoryUsed:         string;
-    memoryMax:          string | null;
-    opsPerSecond:       number;
-    connectedClients:   number;
-    totalKeys:          number;
-    circuitBreakerOpen: boolean;
+    connected:        boolean;
+    memoryUsed:       string;
+    memoryMax:        string | null;
+    opsPerSecond:     number;
+    connectedClients: number;
+    totalKeys:        number;
   };
   postgres: {
-    status:           'connected' | 'disconnected';
     totalConnections: number;
     idleConnections:  number;
     waitingQueries:   number;
   };
   application: {
-    uptimeSeconds: number;
-    heapUsedMB:    number;
-    cachedEvents:  number;
-    activeDrains:  number;
-    drainKeys:     string[];
+    uptime:       string;
+    memoryMB:     { rss: number; heapUsed: number };
+    eventCache:   { cachedEvents: number; keys: string[] };
+    activeDrains: { count: number; events: string[] };
   };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-function formatUptime(seconds: number): string {
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const parts: string[] = [];
-  if (d > 0) parts.push(`${d}d`);
-  if (h > 0) parts.push(`${h}h`);
-  parts.push(`${m}m`);
-  return parts.join(' ');
-}
 
 function fmtTime(date: Date): string {
   return date.toLocaleTimeString(undefined, {
@@ -177,45 +163,30 @@ export default function SystemHealthPage() {
           header={
             <CardHeader
               title="Redis"
-              status={<StatusDot connected={redis.status === 'connected'} />}
+              status={<StatusDot connected={redis.connected} />}
             />
           }
         >
-          <div className="space-y-5">
-            {redis.circuitBreakerOpen && (
-              <div className="flex items-center gap-2.5 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-                <AlertTriangle size={15} className="shrink-0" />
-                Circuit breaker is open — Redis commands are failing fast
-              </div>
-            )}
-            <MetricGrid cols={2}>
-              <MetricItem label="Memory">
-                {redis.memoryMax
-                  ? `${redis.memoryUsed} / ${redis.memoryMax}`
-                  : redis.memoryUsed}
-              </MetricItem>
-              <MetricItem label="Operations">
-                {redis.opsPerSecond.toLocaleString()}/s
-              </MetricItem>
-              <MetricItem label="Clients">
-                {redis.connectedClients.toLocaleString()}
-              </MetricItem>
-              <MetricItem label="Keys">
-                {redis.totalKeys.toLocaleString()}
-              </MetricItem>
-            </MetricGrid>
-          </div>
+          <MetricGrid cols={2}>
+            <MetricItem label="Memory">
+              {redis.memoryMax
+                ? `${redis.memoryUsed} / ${redis.memoryMax}`
+                : redis.memoryUsed}
+            </MetricItem>
+            <MetricItem label="Operations">
+              {redis.opsPerSecond.toLocaleString()}/s
+            </MetricItem>
+            <MetricItem label="Clients">
+              {redis.connectedClients.toLocaleString()}
+            </MetricItem>
+            <MetricItem label="Keys">
+              {redis.totalKeys.toLocaleString()}
+            </MetricItem>
+          </MetricGrid>
         </Card>
 
         {/* ── Card 2: PostgreSQL ─────────────────────────────────────────────── */}
-        <Card
-          header={
-            <CardHeader
-              title="PostgreSQL"
-              status={<StatusDot connected={postgres.status === 'connected'} />}
-            />
-          }
-        >
+        <Card header={<CardHeader title="PostgreSQL" />}>
           <MetricGrid cols={3}>
             <MetricItem label="Total Connections">
               {postgres.totalConnections.toLocaleString()}
@@ -241,19 +212,19 @@ export default function SystemHealthPage() {
         <Card header={<CardHeader title="Application" />}>
           <MetricGrid cols={2}>
             <MetricItem label="Uptime">
-              {formatUptime(application.uptimeSeconds)}
+              {application.uptime}
             </MetricItem>
             <MetricItem label="Memory (heap)">
-              {application.heapUsedMB.toFixed(1)} MB
+              {application.memoryMB.heapUsed.toFixed(1)} MB
             </MetricItem>
             <MetricItem label="Cached Events">
-              {application.cachedEvents.toLocaleString()}
+              {application.eventCache.cachedEvents.toLocaleString()}
             </MetricItem>
             <MetricItem label="Active Drains">
-              <span>{application.activeDrains.toLocaleString()}</span>
-              {application.drainKeys.length > 0 && (
+              <span>{application.activeDrains.count.toLocaleString()}</span>
+              {application.activeDrains.events.length > 0 && (
                 <p className="mt-1 truncate text-xs font-normal text-text-tertiary">
-                  {application.drainKeys.join(', ')}
+                  {application.activeDrains.events.join(', ')}
                 </p>
               )}
             </MetricItem>

@@ -1,25 +1,8 @@
 // apps/engine-gateway/src/controllers/admin.controller.ts
 //
-// ──────────────────────────────────────────────────────────────────────────────
-// ARCHITECTURAL OVERVIEW — Admin Controller
-// ──────────────────────────────────────────────────────────────────────────────
-//
-// This controller handles platform-operator actions (your dashboard calling the
-// API, not end-users calling the API).
-//
-// AUTHENTICATION TODO:
-//   This endpoint MUST be protected before going to production.
-//   Options (pick one):
-//     A) Bearer token in Authorization header (a long-lived operator secret)
-//        signed with a separate JWT_ADMIN_SECRET env var.
-//     B) API Gateway (Kong, AWS API GW) that strips requests without a valid
-//        internal service token before they reach Express.
-//     C) mTLS between the dashboard server and engine-gateway.
-//
-//   For local dev, a simple middleware that checks
-//     req.headers['x-admin-secret'] === process.env.ADMIN_SECRET
-//   is sufficient.
-// ──────────────────────────────────────────────────────────────────────────────
+// Handles platform-operator actions (dashboard → API, not end-user traffic).
+// All routes require requireAdminAuth (Bearer JWT); SUPER_ADMIN-only routes
+// additionally chain requireRole('SUPER_ADMIN').
 
 import { Request, Response } from 'express';
 import { generateKeyPair }    from 'crypto';
@@ -27,7 +10,7 @@ import { promisify }          from 'util';
 import crypto                 from 'crypto';
 import prisma from '../lib/prisma';
 import redis, { getRedisKeys } from '../services/redis.service';
-import { warmEventCache } from '../services/event-cache.service';
+import { warmEventCache, getEventEntry } from '../services/event-cache.service';
 import { startDrain, stopDrain }           from '../services/drain.service';
 import { endEventCore } from '../services/event-lifecycle.service';
 
@@ -116,7 +99,6 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
     rateLimit = 50,
     oversubscriptionMultiplier = 1.5,
     webhookUrl,
-    clientId: bodyClientId,
     mode = 'LIVE',
   } = req.body as {
     name?:                       string;
@@ -124,19 +106,11 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
     rateLimit?:                  number;
     oversubscriptionMultiplier?: number;
     webhookUrl?:                 string;
-    clientId?:                   string;
     mode?:                       string;
   };
 
-  // JWT path: identity comes from the verified token.
-  // x-admin-secret path: clientId must be supplied in the body.
-  const authClient = res.locals.client;
-  const clientId   = authClient?.id ?? bodyClientId;
-
-  if (!clientId) {
-    res.status(400).json({ error: '`clientId` is required when authenticating with the admin secret' });
-    return;
-  }
+  const authClient = res.locals.client!;
+  const clientId   = authClient.id;
 
   if (!name || !stockCount) {
     res.status(400).json({ error: '`name` and `stockCount` are required' });
@@ -165,15 +139,6 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
   }
 
   const queueCap = Math.ceil(stockCount * oversubscriptionMultiplier);
-
-  // JWT middleware already confirmed the client exists. Only verify for the secret path.
-  if (!authClient) {
-    const target = await prisma.client.findUnique({ where: { id: clientId }, select: { id: true } });
-    if (!target) {
-      res.status(404).json({ error: 'Client not found' });
-      return;
-    }
-  }
 
  // ── Step 3: Generate keys ───────────────────────────────────────────────────
   //
@@ -333,9 +298,9 @@ async function seedRedis(params: {
 // Redis; all others use the Postgres stockCount.
 
 export async function listEvents(req: Request, res: Response): Promise<void> {
-  const authClient   = res.locals.client;
-  const isSuperAdmin = !authClient || authClient.role === 'SUPER_ADMIN';
-  const ownerFilter  = isSuperAdmin ? {} : { clientId: authClient!.id };
+  const authClient   = res.locals.client!;
+  const isSuperAdmin = authClient.role === 'SUPER_ADMIN';
+  const ownerFilter  = isSuperAdmin ? {} : { clientId: authClient.id };
 
   const events = await prisma.saleEvent.findMany({
     where:   ownerFilter,
@@ -411,8 +376,8 @@ export async function getEvent(req: Request<{ id: string }>, res: Response): Pro
     return;
   }
 
-  const authClient = res.locals.client;
-  if (authClient && authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
+  const authClient = res.locals.client!;
+  if (authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
     res.status(403).json({ error: 'Not your event' });
     return;
   }
@@ -488,8 +453,8 @@ export async function activateEvent(req: Request<{ id: string }>, res: Response)
     return;
   }
 
-  const activateAuth = res.locals.client;
-  if (activateAuth && activateAuth.role !== 'SUPER_ADMIN' && event.clientId !== activateAuth.id) {
+  const activateAuth = res.locals.client!;
+  if (activateAuth.role !== 'SUPER_ADMIN' && event.clientId !== activateAuth.id) {
     res.status(403).json({ error: 'Not your event' });
     return;
   }
@@ -566,8 +531,8 @@ export async function getEventStats(req: Request<{ id: string }>, res: Response)
     return;
   }
 
-  const authClient = res.locals.client;
-  if (authClient && authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
+  const authClient = res.locals.client!;
+  if (authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
     res.status(403).json({ error: 'Not your event' });
     return;
   }
@@ -665,13 +630,13 @@ export async function getEventStats(req: Request<{ id: string }>, res: Response)
 //
 // Pauses an ACTIVE event: stops the drain loop and marks status PAUSED in
 // both Postgres and Redis.  Queue positions are preserved — users keep their
-// place.  Only SUPER_ADMIN (or x-admin-secret) may call this.
+// place.  Only SUPER_ADMIN may call this.
 
 export async function pauseEvent(req: Request<{ id: string }>, res: Response): Promise<void> {
   const { id } = req.params;
 
-  const authClient = res.locals.client;
-  if (authClient && authClient.role !== 'SUPER_ADMIN') {
+  const authClient = res.locals.client!;
+  if (authClient.role !== 'SUPER_ADMIN') {
     res.status(403).json({ error: 'Only SUPER_ADMIN can pause events' });
     return;
   }
@@ -729,13 +694,13 @@ export async function pauseEvent(req: Request<{ id: string }>, res: Response): P
 //
 // Resumes a PAUSED event: warms the Node cache (in case of server restart),
 // updates status to ACTIVE, and restarts the drain loop.
-// Only SUPER_ADMIN (or x-admin-secret) may call this.
+// Only SUPER_ADMIN may call this.
 
 export async function resumeEvent(req: Request<{ id: string }>, res: Response): Promise<void> {
   const { id } = req.params;
 
-  const authClient = res.locals.client;
-  if (authClient && authClient.role !== 'SUPER_ADMIN') {
+  const authClient = res.locals.client!;
+  if (authClient.role !== 'SUPER_ADMIN') {
     res.status(403).json({ error: 'Only SUPER_ADMIN can resume events' });
     return;
   }
@@ -814,8 +779,8 @@ export async function endEvent(req: Request<{ id: string }>, res: Response): Pro
     return;
   }
 
-  const endAuth = res.locals.client;
-  if (endAuth && endAuth.role !== 'SUPER_ADMIN' && event.clientId !== endAuth.id) {
+  const endAuth = res.locals.client!;
+  if (endAuth.role !== 'SUPER_ADMIN' && event.clientId !== endAuth.id) {
     res.status(403).json({ error: 'Not your event' });
     return;
   }
@@ -840,7 +805,12 @@ export async function endEvent(req: Request<{ id: string }>, res: Response): Pro
 // Aggregate metrics for the authenticated CLIENT's own account.
 
 export async function getClientOverview(req: Request, res: Response): Promise<void> {
-  const clientId = res.locals.client.id;
+  const client = res.locals.client!;
+  if (!client) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const clientId = client.id;
 
   const events = await prisma.saleEvent.findMany({
     where:  { clientId },
@@ -914,8 +884,8 @@ export async function getEventTimeline(req: Request<{ id: string }>, res: Respon
     return;
   }
 
-  const authClient = res.locals.client;
-  if (authClient && authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
+  const authClient = res.locals.client!;
+  if (authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
     res.status(403).json({ error: 'Not your event' });
     return;
   }
@@ -965,8 +935,8 @@ export async function rotateSigningSecret(req: Request<{ id: string }>, res: Res
     return;
   }
 
-  const authClient = res.locals.client;
-  if (authClient && authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
+  const authClient = res.locals.client!;
+  if (authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
     res.status(403).json({ error: 'Not your event' });
     return;
   }
@@ -999,7 +969,7 @@ export async function rotateSigningSecret(req: Request<{ id: string }>, res: Res
 
 export async function duplicateEvent(req: Request<{ id: string }>, res: Response): Promise<void> {
   const { id } = req.params;
-  const authClient = res.locals.client;
+  const authClient = res.locals.client!;
 
   const source = await prisma.saleEvent.findUnique({ where: { id } });
   if (!source) {
@@ -1007,12 +977,12 @@ export async function duplicateEvent(req: Request<{ id: string }>, res: Response
     return;
   }
 
-  if (authClient && authClient.role !== 'SUPER_ADMIN' && source.clientId !== authClient.id) {
+  if (authClient.role !== 'SUPER_ADMIN' && source.clientId !== authClient.id) {
     res.status(403).json({ error: 'Not your event' });
     return;
   }
 
-  const clientId       = authClient?.id ?? source.clientId;
+  const clientId       = authClient.role === 'SUPER_ADMIN' ? source.clientId : authClient.id;
   const eventPublicKey = `pk_live_${crypto.randomBytes(32).toString('hex')}`;
   const signingSecret  = `ss_live_${crypto.randomBytes(32).toString('hex')}`;
 

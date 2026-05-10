@@ -39,7 +39,7 @@ interface OverviewResponse {
   last24h: {
     eventsCreated: number;
     totalRequests: number;
-    byResult: {
+    results: {
       WON:          number;
       SOLD_OUT:     number;
       QUEUED:       number;
@@ -249,10 +249,10 @@ export default function AdminOverviewPage() {
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
           <MiniStat label="Events Created" value={h24.eventsCreated} />
           <MiniStat label="Total Requests" value={h24.totalRequests.toLocaleString()} />
-          <MiniStat label="Won"            value={h24.byResult.WON.toLocaleString()} />
-          <MiniStat label="Sold Out"       value={h24.byResult.SOLD_OUT.toLocaleString()} />
-          <MiniStat label="Queued"         value={h24.byResult.QUEUED.toLocaleString()} />
-          <MiniStat label="Rate Limited"   value={h24.byResult.RATE_LIMITED.toLocaleString()} />
+          <MiniStat label="Won"            value={h24.results.WON.toLocaleString()} />
+          <MiniStat label="Sold Out"       value={h24.results.SOLD_OUT.toLocaleString()} />
+          <MiniStat label="Queued"         value={h24.results.QUEUED.toLocaleString()} />
+          <MiniStat label="Rate Limited"   value={h24.results.RATE_LIMITED.toLocaleString()} />
         </div>
       </Card>
     </div>

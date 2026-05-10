@@ -16,7 +16,7 @@ export interface Client {
   id:        string;
   email:     string;
   name?:     string;
-  role:      string;
+  role:      'CLIENT' | 'SUPER_ADMIN';
   publicKey: string;
   createdAt: string;
 }
@@ -51,7 +51,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
       return;
     }
-    api.get<Client>('/api/auth/me')
+    api.get<{ client: Client }>('/api/auth/me')
+      .then(r => r.client)
       .then(setUser)
       .catch(() => {
         Cookies.remove(AUTH_TOKEN_COOKIE);

@@ -14,10 +14,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   const closeMobile = useCallback(() => setMobileOpen(false), []);
 
   useEffect(() => {
-    if (!isLoading && !user) router.replace('/login');
+    if (isLoading) return;
+    if (!user) router.replace('/login');
+    else if (user.role === 'SUPER_ADMIN') router.replace('/admin');
   }, [isLoading, user, router]);
 
-  if (isLoading || !user) return null;
+  if (isLoading || !user || user.role === 'SUPER_ADMIN') return null;
 
   return (
     <div className="flex">

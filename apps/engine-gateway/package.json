@@ -7,7 +7,8 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx watch src/server.ts",
     "build": "tsc && cp -r src/scripts dist/scripts",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "create-admin": "tsx scripts/create-admin.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
