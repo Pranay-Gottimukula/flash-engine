@@ -4,19 +4,28 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  Zap, BarChart3, Users, LayoutGrid, Activity, Settings,
+  Zap, BarChart3, Radio, Users, LayoutGrid, Activity, Settings,
   LogOut, ChevronsLeft, ChevronsRight,
+  type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAuth } from '@/lib/auth-context';
 
-const NAV_ITEMS = [
-  { label: 'Overview',   href: '/admin',          icon: BarChart3  },
-  { label: 'Clients',    href: '/admin/clients',  icon: Users      },
-  { label: 'All Events', href: '/admin/events',   icon: LayoutGrid },
-  { label: 'System',     href: '/admin/system',   icon: Activity   },
-  { label: 'Settings',   href: '/admin/settings', icon: Settings   },
-] as const;
+interface NavItem {
+  label: string;
+  href:  string;
+  icon:  LucideIcon;
+  live?: boolean;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { label: 'Overview',   href: '/admin',          icon: BarChart3          },
+  { label: 'Live',       href: '/admin/live',     icon: Radio, live: true  },
+  { label: 'Clients',    href: '/admin/clients',  icon: Users               },
+  { label: 'All Events', href: '/admin/events',   icon: LayoutGrid          },
+  { label: 'System',     href: '/admin/system',   icon: Activity            },
+  { label: 'Settings',   href: '/admin/settings', icon: Settings            },
+];
 
 interface AdminSidebarProps {
   mobileOpen?:    boolean;
@@ -82,7 +91,7 @@ export function AdminSidebar({ mobileOpen = false, onMobileClose }: AdminSidebar
 
       {/* ── Nav ──────────────────────────────────────────────────────── */}
       <nav className="flex-1 space-y-0.5 overflow-y-auto py-3">
-        {NAV_ITEMS.map(({ label, href, icon: Icon }) => {
+        {NAV_ITEMS.map(({ label, href, icon: Icon, live }) => {
           const isActive = href === '/admin'
             ? pathname === '/admin'
             : pathname === href || pathname.startsWith(href + '/');
@@ -105,7 +114,16 @@ export function AdminSidebar({ mobileOpen = false, onMobileClose }: AdminSidebar
                 )}
               >
                 <Icon size={16} className="shrink-0" />
-                <span className={cn(collapsed && 'md:hidden')}>{label}</span>
+                <span className={cn('flex flex-1 items-center gap-2', collapsed && 'md:hidden')}>
+                  {label}
+                  {live && (
+                    <span
+                      className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+                      style={{ animation: 'stat-pulse 2s ease-in-out infinite' }}
+                      aria-label="Live"
+                    />
+                  )}
+                </span>
               </Link>
 
               {collapsed && (

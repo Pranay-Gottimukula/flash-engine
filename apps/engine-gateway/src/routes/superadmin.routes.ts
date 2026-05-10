@@ -6,6 +6,7 @@ import {
   unsuspendClient,
   getSystemHealth,
   getPlatformOverview,
+  getLiveEvents,
 } from '../controllers/superadmin.controller';
 
 const router = Router();
@@ -18,5 +19,6 @@ router.put('/clients/:id/suspend',   suspendClient);
 router.put('/clients/:id/unsuspend', unsuspendClient);
 router.get('/system/health',         getSystemHealth);
 router.get('/overview',              getPlatformOverview);
+router.get('/live',                  getLiveEvents);
 
 export default router;
