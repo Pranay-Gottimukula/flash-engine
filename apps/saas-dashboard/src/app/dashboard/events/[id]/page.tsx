@@ -14,6 +14,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { EventStats } from '@/components/events/event-stats';
 import { EventTimelineCard } from '@/components/events/event-timeline';
+import { EventTimelineChart } from '@/components/events/event-timeline-chart';
 import { EventKeysCard } from '@/components/events/event-keys';
 import { EventFunnelCard } from '@/components/events/event-funnel';
 import type { EventDetail, StatsResponse } from '@/components/events/types';
@@ -143,6 +144,13 @@ export default function EventDetailPage() {
 
   return (
     <div className="animate-page-in">
+      {/* ── Test Mode Banner ────────────────────────────────────────────────── */}
+      {event.mode === 'TEST' && (
+        <div className="mb-6 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm font-medium text-yellow-400">
+          TEST MODE — Tokens are marked with <code className="font-mono">test: true</code>. Stock resets every 5 minutes.
+        </div>
+      )}
+
       {/* ── Page header ─────────────────────────────────────────────────────── */}
       <div className="mb-6 flex items-start justify-between border-b border-border-subtle pb-6">
         <div className="flex items-center gap-3">
@@ -150,6 +158,9 @@ export default function EventDetailPage() {
           <Badge variant={STATUS_VARIANT[event.status]}>
             {event.status.charAt(0) + event.status.slice(1).toLowerCase()}
           </Badge>
+          {event.mode === 'TEST' && (
+            <Badge variant="warning">TEST</Badge>
+          )}
         </div>
 
         <div className="ml-4 flex shrink-0 items-center gap-2">
@@ -195,6 +206,12 @@ export default function EventDetailPage() {
 
       {/* ── Shared sections ─────────────────────────────────────────────────── */}
       <EventStats event={event} stats={stats} isLive={isActive} />
+
+      {event.status !== 'PENDING' && (
+        <div className="mb-5">
+          <EventTimelineChart eventId={event.id} status={event.status} />
+        </div>
+      )}
 
       <div className="space-y-5">
         {showTimeline && (

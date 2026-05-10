@@ -10,6 +10,7 @@ import {
   resumeEvent,
   endEvent,
   getEventStats,
+  getEventTimeline,
   getClientOverview,
   duplicateEvent,
 } from '../controllers/admin.controller';
@@ -29,5 +30,6 @@ router.put   ('/events/:id/end',            endEvent);
 router.post  ('/events/:id/duplicate',      duplicateEvent);
 router.get   ('/events/:id',                getEvent);
 router.get   ('/events/:id/stats',          getEventStats);
+router.get   ('/events/:id/timeline',       getEventTimeline);
 
 export default router;

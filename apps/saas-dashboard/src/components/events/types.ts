@@ -13,6 +13,7 @@ export interface EventDetail {
   id:                         string;
   name:                       string;
   status:                     EventStatus;
+  mode:                       string;
   stockCount:                 number;
   rateLimit:                  number;
   oversubscriptionMultiplier: number;

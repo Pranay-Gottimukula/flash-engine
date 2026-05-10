@@ -26,6 +26,7 @@ export default function CreateEventPage() {
   const [rateLimit,  setRateLimit]  = useState('50');
   const [multiplier, setMultiplier] = useState('1.5');
   const [webhookUrl, setWebhookUrl] = useState('');
+  const [testMode,   setTestMode]   = useState(false);
   const [error,      setError]      = useState('');
   const [loading,    setLoading]    = useState(false);
 
@@ -43,6 +44,7 @@ export default function CreateEventPage() {
         stockCount:                 Number(stockCount),
         rateLimit:                  Number(rateLimit),
         oversubscriptionMultiplier: Number(multiplier),
+        mode:                       testMode ? 'TEST' : 'LIVE',
       };
       if (webhookUrl.trim()) body.webhookUrl = webhookUrl.trim();
 
@@ -129,6 +131,32 @@ export default function CreateEventPage() {
               <p className="text-xs text-text-tertiary">
                 Get notified when event status changes. Optional.
               </p>
+            </div>
+
+            <div className="flex items-start justify-between gap-4 rounded-lg border border-border-subtle p-4">
+              <div className="flex flex-col gap-1">
+                <span className="text-sm font-medium text-text-primary">Test Mode</span>
+                <span className="text-xs text-text-tertiary">
+                  Queue works normally but tokens are marked as test. Stock resets every 5 minutes.
+                </span>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={testMode}
+                onClick={() => setTestMode(v => !v)}
+                className={[
+                  'relative mt-0.5 h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base',
+                  testMode ? 'bg-yellow-500' : 'bg-surface-raised',
+                ].join(' ')}
+              >
+                <span
+                  className={[
+                    'block h-5 w-5 rounded-full bg-white shadow transition-transform',
+                    testMode ? 'translate-x-5' : 'translate-x-0',
+                  ].join(' ')}
+                />
+              </button>
             </div>
 
             <div className="flex gap-3 pt-2">

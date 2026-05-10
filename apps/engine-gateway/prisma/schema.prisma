@@ -43,6 +43,8 @@ model SaleEvent {
   // Kept as random bytes — no reason to use RSA for request authentication
   signingSecret  String
   
+  mode         String   @default("LIVE") // LIVE | TEST
+
   webhookUrl   String?
   activatedAt  DateTime?
   endedAt      DateTime?
