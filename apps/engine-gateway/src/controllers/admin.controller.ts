@@ -950,6 +950,49 @@ export async function getEventTimeline(req: Request<{ id: string }>, res: Respon
   res.json({ timeline, bucketSizeSeconds });
 }
 
+// ── PUT /api/admin/events/:id/rotate-secret ──────────────────────────────────
+//
+// Generates a new HMAC signing secret for the event without touching the queue,
+// JWTs, or RSA keys. The old secret is invalidated immediately — the client's
+// backend must update its copy before the next release request.
+
+export async function rotateSigningSecret(req: Request<{ id: string }>, res: Response): Promise<void> {
+  const { id } = req.params;
+
+  const event = await prisma.saleEvent.findUnique({ where: { id } });
+  if (!event) {
+    res.status(404).json({ error: 'Event not found' });
+    return;
+  }
+
+  const authClient = res.locals.client;
+  if (authClient && authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
+    res.status(403).json({ error: 'Not your event' });
+    return;
+  }
+
+  const newSigningSecret = `ss_live_${crypto.randomBytes(32).toString('hex')}`;
+
+  await prisma.saleEvent.update({
+    where: { id },
+    data:  { signingSecret: newSigningSecret },
+  });
+
+  // Update in-process cache if the event is currently ACTIVE.
+  // getEventEntry returns the cached entry on a hit (with the old secret) or
+  // null when the event isn't active / isn't cached. In the cache-hit case we
+  // overwrite it with the new secret so in-flight requests immediately use it.
+  const cached = await getEventEntry(event.publicKey);
+  if (cached) {
+    warmEventCache(event.publicKey, { ...cached, signingSecret: newSigningSecret });
+  }
+
+  res.json({
+    signingSecret: newSigningSecret,
+    message: 'Signing secret rotated. Update your server immediately — the old secret is now invalid.',
+  });
+}
+
 // ── POST /api/admin/events/:id/duplicate ──────────────────────────────────────
 //
 // Creates a PENDING copy of an existing event with a fresh keypair.
