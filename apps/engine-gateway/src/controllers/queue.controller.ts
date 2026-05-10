@@ -257,6 +257,51 @@ async function resolveUserStatus(publicKey: string, userId: string): Promise<Use
   return { status: 'NOT_FOUND' };
 }
 
+// ── GET /api/queue/info ───────────────────────────────────────────────────────
+//
+// Public endpoint — no auth required. Returns estimated wait time and queue
+// length so the browser SDK can show this BEFORE the user joins.
+// Zero Postgres queries — pure Redis reads.
+
+export async function getQueueInfo(req: Request, res: Response): Promise<void> {
+  const { pk } = req.query;
+  if (!pk || typeof pk !== 'string') {
+    res.status(400).json({ error: 'Missing pk query parameter' });
+    return;
+  }
+
+  try {
+    const eventData = await redis.hmget(
+      `flash:event:${pk}`,
+      'status', 'stock', 'rateLimit',
+    );
+
+    const [status, stock, rateLimit] = eventData;
+
+    if (!status) {
+      res.status(404).json({ error: 'EVENT_NOT_FOUND' });
+      return;
+    }
+
+    const queueLength = await redis.zcard(`flash:queue:${pk}`);
+    const rateLimitNum = parseInt(rateLimit || '50', 10);
+    const estimatedWaitMs = rateLimitNum > 0
+      ? Math.round(queueLength * (1000 / rateLimitNum))
+      : 0;
+
+    res.json({
+      status,
+      queueLength,
+      rateLimit: rateLimitNum,
+      stockRemaining: parseInt(stock || '0', 10),
+      estimatedWaitMs,
+    });
+  } catch (err) {
+    console.error('getQueueInfo error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 // ── POST /api/queue/verify ────────────────────────────────────────────────────
 //
 // TODO: Implement the server-side verify endpoint.
