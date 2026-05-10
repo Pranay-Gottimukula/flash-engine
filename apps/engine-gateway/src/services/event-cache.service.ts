@@ -10,6 +10,7 @@ interface EventEntry {
   signingSecret:  string;   // HMAC secret for release route
   eventId:        string;
   name:           string;
+  mode:           string;   // LIVE | TEST
 }
 
 // Module-level Map — lives in Node process RAM, not Redis
@@ -32,6 +33,7 @@ export async function getEventEntry(publicKey: string): Promise<EventEntry | nul
       signingSecret: true,
       name:          true,
       status:        true,
+      mode:          true,
     },
   });
 
@@ -43,6 +45,7 @@ export async function getEventEntry(publicKey: string): Promise<EventEntry | nul
     signingSecret:  event.signingSecret,
     eventId:        event.id,
     name:           event.name,
+    mode:           event.mode,
   };
 
   cache.set(publicKey, entry);

@@ -25,6 +25,7 @@ interface SaleEvent {
   id:         string;
   name:       string;
   status:     'PENDING' | 'ACTIVE' | 'PAUSED' | 'ENDED';
+  mode:       string;
   stockCount: number;
   rateLimit:  number;
   createdAt:  string;
@@ -143,9 +144,14 @@ export default function DashboardPage() {
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <p className="font-medium text-text-primary leading-snug">{event.name}</p>
-                    <Badge variant={statusVariant[event.status]}>
-                      {statusLabel[event.status]}
-                    </Badge>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {event.mode === 'TEST' && (
+                        <Badge variant="warning">TEST</Badge>
+                      )}
+                      <Badge variant={statusVariant[event.status]}>
+                        {statusLabel[event.status]}
+                      </Badge>
+                    </div>
                   </div>
                   <p className="text-xs text-text-secondary">
                     {event.stockCount.toLocaleString()} items · Rate: {event.rateLimit}/s

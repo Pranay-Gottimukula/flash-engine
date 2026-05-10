@@ -247,3 +247,49 @@ export async function getPlatformOverview(_req: Request, res: Response): Promise
     timestamp: new Date().toISOString(),
   });
 }
+
+// ── GET /api/superadmin/live ──────────────────────────────────────────────────
+//
+// Returns all ACTIVE events with live Redis data combined — the "war room" feed.
+
+export async function getLiveEvents(req: Request, res: Response): Promise<void> {
+  const activeEvents = await prisma.saleEvent.findMany({
+    where:   { status: 'ACTIVE' },
+    include: { client: { select: { email: true, name: true } } },
+  });
+
+  if (activeEvents.length === 0) {
+    res.json({ events: [] });
+    return;
+  }
+
+  const pipeline = redis.pipeline();
+  for (const event of activeEvents) {
+    pipeline.hmget(`flash:event:${event.publicKey}`, 'stock', 'admitted', 'rateLimit');
+    pipeline.zcard(`flash:queue:${event.publicKey}`);
+  }
+  const results = await pipeline.exec();
+
+  const live = activeEvents.map((event, i) => {
+    const [, hashData]    = (results![i * 2]     ?? [null, []]) as [Error | null, (string | null)[]];
+    const [, queueDepth]  = (results![i * 2 + 1] ?? [null, 0])  as [Error | null, number];
+    const [stock, admitted, rateLimit] = hashData ?? [];
+
+    return {
+      id:             event.id,
+      name:           event.name,
+      publicKey:      event.publicKey,
+      mode:           event.mode,
+      clientEmail:    event.client.email,
+      clientName:     event.client.name ?? null,
+      stockTotal:     event.stockCount,
+      stockRemaining: parseInt(stock     ?? '0',  10),
+      admitted:       parseInt(admitted  ?? '0',  10),
+      queueDepth:     queueDepth ?? 0,
+      rateLimit:      parseInt(rateLimit ?? '50', 10),
+      activatedAt:    event.activatedAt,
+    };
+  });
+
+  res.json({ events: live });
+}

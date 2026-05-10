@@ -174,9 +174,10 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
 
   const token = await sign({
     jti,
-    sub: userId,
-    pk:  publicKey,
-    eid: eventData.eventId,
+    sub:  userId,
+    pk:   publicKey,
+    eid:  eventData.eventId,
+    ...(eventData.mode === 'TEST' ? { test: true } : {}),
   });
 
   // DO NOT AWAIT — Postgres latency must never block this response.
@@ -388,7 +389,7 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
 
   // ── Step 4: Verify signature with RS256 ─────────────────────────────────────
 
-  let verified: { jti: string; sub: string; exp: number };
+  let verified: { jti: string; sub: string; exp: number; test?: boolean };
 
   try {
     const verify = createVerifier({
@@ -443,5 +444,6 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
     verified: true,
     userId:   verified.sub,
     eventId,
+    ...(verified.test ? { test: true } : {}),
   });
 }

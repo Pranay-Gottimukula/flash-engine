@@ -31,6 +31,40 @@ import { warmEventCache } from '../services/event-cache.service';
 import { startDrain, stopDrain }           from '../services/drain.service';
 import { endEventCore } from '../services/event-lifecycle.service';
 
+// ── Test Mode Reset Timers ────────────────────────────────────────────────────
+//
+// For TEST mode events, automatically reset stock/queue every 5 minutes so
+// clients can test their integration repeatedly without re-creating the event.
+
+const testResetTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+function startTestResetTimer(publicKey: string, stockCount: number, eventId: string): void {
+  clearTestResetTimer(publicKey);
+  const { eventKey, queueKey, resultKey } = getRedisKeys(publicKey);
+  const timer = setInterval(async () => {
+    try {
+      const pipeline = redis.pipeline();
+      pipeline.hset(eventKey, 'stock',    String(stockCount));
+      pipeline.hset(eventKey, 'admitted', '0');
+      pipeline.del(resultKey);
+      pipeline.del(queueKey);
+      await pipeline.exec();
+      console.log(`[test-reset] Reset stock/queue for TEST event ${eventId}`);
+    } catch (err) {
+      console.error(`[test-reset] Reset failed for ${eventId}:`, err);
+    }
+  }, 5 * 60 * 1000);
+  testResetTimers.set(publicKey, timer);
+}
+
+function clearTestResetTimer(publicKey: string): void {
+  const timer = testResetTimers.get(publicKey);
+  if (timer) {
+    clearInterval(timer);
+    testResetTimers.delete(publicKey);
+  }
+}
+
 const generateKeyPairAsync = promisify(generateKeyPair);
 
 const API_URL = process.env.API_URL ?? 'https://api.flashsale.dev';
@@ -83,6 +117,7 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
     oversubscriptionMultiplier = 1.5,
     webhookUrl,
     clientId: bodyClientId,
+    mode = 'LIVE',
   } = req.body as {
     name?:                       string;
     stockCount?:                 number;
@@ -90,6 +125,7 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
     oversubscriptionMultiplier?: number;
     webhookUrl?:                 string;
     clientId?:                   string;
+    mode?:                       string;
   };
 
   // JWT path: identity comes from the verified token.
@@ -120,6 +156,11 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
   if (typeof oversubscriptionMultiplier !== 'number' ||
       oversubscriptionMultiplier < 1.0 || oversubscriptionMultiplier > 3.0) {
     res.status(400).json({ error: '`oversubscriptionMultiplier` must be between 1.0 and 3.0' });
+    return;
+  }
+
+  if (mode !== 'LIVE' && mode !== 'TEST') {
+    res.status(400).json({ error: '`mode` must be "LIVE" or "TEST"' });
     return;
   }
 
@@ -187,6 +228,7 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
           rsaPublicKey,
           signingSecret,
           webhookUrl:    webhookUrl ?? null,
+          mode,
         },
       });
 
@@ -241,6 +283,7 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
     id:            event.id,
     name:          event.name,
     status:        event.status,
+    mode:          event.mode,
     publicKey:     eventPublicKey,
     signingSecret,                  // for release route HMAC — shown once
     rsaPublicKey,                   // for JWT verification — safe to store anywhere
@@ -306,6 +349,7 @@ export async function listEvents(req: Request, res: Response): Promise<void> {
       oversubscriptionMultiplier: true,
       publicKey:                  true,
       rsaPublicKey:               true,
+      mode:                       true,
       createdAt:                  true,
       client: { select: { email: true } },
       _count: { select: { attempts: true, releases: true, usedJtis: true } },
@@ -330,6 +374,7 @@ export async function listEvents(req: Request, res: Response): Promise<void> {
       id:                         e.id,
       name:                       e.name,
       status:                     e.status,
+      mode:                       e.mode,
       stockCount:                 e.status === 'ACTIVE'
                                     ? (liveStockMap.get(e.publicKey) ?? e.stockCount)
                                     : e.stockCount,
@@ -358,7 +403,7 @@ export async function getEvent(req: Request<{ id: string }>, res: Response): Pro
       id: true, name: true, status: true, stockCount: true, rateLimit: true,
       oversubscriptionMultiplier: true, publicKey: true, rsaPublicKey: true,
       signingSecret: true, webhookUrl: true, endedAt: true, createdAt: true,
-      clientId: true,
+      clientId: true, mode: true,
     },
   });
   if (!event) {
@@ -404,6 +449,7 @@ const response = await fetch('${API_URL}/api/queue/verify', {
     id:                         event.id,
     name:                       event.name,
     status:                     event.status,
+    mode:                       event.mode,
     stockCount:                 event.stockCount,
     rateLimit:                  event.rateLimit,
     oversubscriptionMultiplier: event.oversubscriptionMultiplier,
@@ -490,7 +536,12 @@ export async function activateEvent(req: Request<{ id: string }>, res: Response)
     signingSecret:  event.signingSecret,
     eventId:        event.id,
     name:           event.name,
+    mode:           event.mode,
   });
+
+  if (event.mode === 'TEST') {
+    startTestResetTimer(event.publicKey, event.stockCount, event.id);
+  }
 
   startDrain(event.publicKey, event.rateLimit);
 
@@ -733,7 +784,12 @@ export async function resumeEvent(req: Request<{ id: string }>, res: Response): 
     signingSecret: event.signingSecret,
     eventId:       event.id,
     name:          event.name,
+    mode:          event.mode,
   });
+
+  if (event.mode === 'TEST') {
+    startTestResetTimer(event.publicKey, event.stockCount, event.id);
+  }
 
   startDrain(event.publicKey, event.rateLimit);
 
@@ -769,6 +825,7 @@ export async function endEvent(req: Request<{ id: string }>, res: Response): Pro
     return;
   }
 
+  clearTestResetTimer(event.publicKey);
   await endEventCore(event);
 
   res.status(200).json({
@@ -841,6 +898,101 @@ export async function getClientOverview(req: Request, res: Response): Promise<vo
   });
 }
 
+// ── GET /api/admin/events/:id/timeline ───────────────────────────────────────
+//
+// Returns time-bucketed QueueAttempt counts for charting throughput over the
+// course of an event. Raw SQL via $queryRaw — Prisma's groupBy can't express
+// date truncation to an arbitrary bucket size.
+
+export async function getEventTimeline(req: Request<{ id: string }>, res: Response): Promise<void> {
+  const { id } = req.params;
+  const { bucketSize = '10' } = req.query;
+
+  const event = await prisma.saleEvent.findUnique({ where: { id } });
+  if (!event) {
+    res.status(404).json({ error: 'Event not found' });
+    return;
+  }
+
+  const authClient = res.locals.client;
+  if (authClient && authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
+    res.status(403).json({ error: 'Not your event' });
+    return;
+  }
+
+  const bucketSizeSeconds = Math.max(1, parseInt(bucketSize as string, 10) || 10);
+
+  const buckets = await prisma.$queryRaw`
+    SELECT
+      date_trunc('second', "createdAt")
+        - (EXTRACT(SECOND FROM "createdAt")::int % ${bucketSizeSeconds}) * interval '1 second'
+        AS bucket,
+      COUNT(*) FILTER (WHERE result = 'WON')      AS won,
+      COUNT(*) FILTER (WHERE result = 'QUEUED')   AS queued,
+      COUNT(*) FILTER (WHERE result = 'SOLD_OUT') AS sold_out,
+      COUNT(*) FILTER (WHERE result = 'RELEASED') AS released,
+      COUNT(*)                                     AS total
+    FROM "QueueAttempt"
+    WHERE "saleEventId" = ${id}
+    GROUP BY bucket
+    ORDER BY bucket ASC
+  `;
+
+  const timeline = (buckets as any[]).map(b => ({
+    timestamp: (b.bucket as Date).toISOString(),
+    won:       Number(b.won),
+    queued:    Number(b.queued),
+    soldOut:   Number(b.sold_out),
+    released:  Number(b.released),
+    total:     Number(b.total),
+  }));
+
+  res.json({ timeline, bucketSizeSeconds });
+}
+
+// ── PUT /api/admin/events/:id/rotate-secret ──────────────────────────────────
+//
+// Generates a new HMAC signing secret for the event without touching the queue,
+// JWTs, or RSA keys. The old secret is invalidated immediately — the client's
+// backend must update its copy before the next release request.
+
+export async function rotateSigningSecret(req: Request<{ id: string }>, res: Response): Promise<void> {
+  const { id } = req.params;
+
+  const event = await prisma.saleEvent.findUnique({ where: { id } });
+  if (!event) {
+    res.status(404).json({ error: 'Event not found' });
+    return;
+  }
+
+  const authClient = res.locals.client;
+  if (authClient && authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
+    res.status(403).json({ error: 'Not your event' });
+    return;
+  }
+
+  const newSigningSecret = `ss_live_${crypto.randomBytes(32).toString('hex')}`;
+
+  await prisma.saleEvent.update({
+    where: { id },
+    data:  { signingSecret: newSigningSecret },
+  });
+
+  // Update in-process cache if the event is currently ACTIVE.
+  // getEventEntry returns the cached entry on a hit (with the old secret) or
+  // null when the event isn't active / isn't cached. In the cache-hit case we
+  // overwrite it with the new secret so in-flight requests immediately use it.
+  const cached = await getEventEntry(event.publicKey);
+  if (cached) {
+    warmEventCache(event.publicKey, { ...cached, signingSecret: newSigningSecret });
+  }
+
+  res.json({
+    signingSecret: newSigningSecret,
+    message: 'Signing secret rotated. Update your server immediately — the old secret is now invalid.',
+  });
+}
+
 // ── POST /api/admin/events/:id/duplicate ──────────────────────────────────────
 //
 // Creates a PENDING copy of an existing event with a fresh keypair.
@@ -899,6 +1051,7 @@ export async function duplicateEvent(req: Request<{ id: string }>, res: Response
           rsaPrivateKey,
           rsaPublicKey,
           signingSecret,
+          mode:                       source.mode,
         },
       });
 
