@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Menu } from 'lucide-react';
 import { Sidebar } from './sidebar';
 import { useAuth } from '@/lib/auth-context';
@@ -9,7 +9,9 @@ import { cn } from '@/lib/cn';
 
 export function DashboardShell({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
-  const router = useRouter();
+  const router   = useRouter();
+  const pathname = usePathname();
+  const isDocs   = pathname?.startsWith('/dashboard/docs') ?? false;
   const [mobileOpen,  setMobileOpen]  = useState(false);
   const [collapsed,   setCollapsed]   = useState(false);
 
@@ -78,7 +80,10 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <span className="text-sm font-semibold text-text-primary">FlashEngine</span>
         </div>
 
-        <div className="animate-page-in mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
+        <div className={cn(
+          'animate-page-in py-6 md:py-8',
+          isDocs ? 'px-0' : 'mx-auto max-w-5xl px-4 md:px-8',
+        )}>
           {children}
         </div>
       </main>

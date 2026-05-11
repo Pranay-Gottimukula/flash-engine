@@ -128,16 +128,22 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   }
 
   if (code === -1) {
-    prisma.queueAttempt.create({
-      data: { saleEventId: '', userId, result: 'SOLD_OUT', jti: null },
+    getEventEntry(publicKey).then(ev => {
+      if (!ev) return;
+      prisma.queueAttempt.create({
+        data: { saleEventId: ev.eventId, userId, result: 'SOLD_OUT', jti: null },
+      }).catch(() => {});
     }).catch(() => {});
     res.status(200).json({ status: 'SOLD_OUT' });
     return;
   }
 
   if (code === 0) {
-    prisma.queueAttempt.create({
-      data: { saleEventId: '', userId, result: 'QUEUED', jti: null },
+    getEventEntry(publicKey).then(ev => {
+      if (!ev) return;
+      prisma.queueAttempt.create({
+        data: { saleEventId: ev.eventId, userId, result: 'QUEUED', jti: null },
+      }).catch(() => {});
     }).catch(() => {});
     const pollUrl         = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
     const queuePos        = position ?? 0;

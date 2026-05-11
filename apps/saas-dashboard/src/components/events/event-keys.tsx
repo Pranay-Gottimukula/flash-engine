@@ -6,8 +6,8 @@ import { api } from '@/lib/api';
 import { toErrorMessage } from '@/lib/utils';
 import { useToast } from '@/components/ui/toast';
 import { Card } from '@/components/ui/card';
-import { CopyableField } from '@/components/ui/copyable-field';
 import { CodeBlock } from '@/components/docs/code-block';
+import { Callout } from '@/components/docs/callout';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import type { EventDetail } from './types';
@@ -44,17 +44,32 @@ export function EventKeysCard({ event }: EventKeysProps) {
   return (
     <>
       <Card header={<p className="text-sm font-semibold text-text-primary">Integration Keys</p>}>
-        <div className="space-y-4">
-          <CopyableField label="Public Key"     value={event.publicKey}    codeStyle />
-          <CopyableField label="RSA Public Key" value={event.rsaPublicKey} codeStyle multiline />
+        <div className="space-y-5">
 
-          <CopyableField
-            label="Signing Secret"
-            value={signingSecret}
-            masked
-            codeStyle
-            warning="Store this securely. Used for release route HMAC."
-            headerAction={
+          {/* Public Key */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-text-tertiary uppercase tracking-wider">Public Key</p>
+            <CodeBlock
+              code={event.publicKey}
+              language="bash"
+              title="public-key"
+            />
+          </div>
+
+          {/* RSA Public Key */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-text-tertiary uppercase tracking-wider">RSA Public Key</p>
+            <CodeBlock
+              code={event.rsaPublicKey}
+              language="bash"
+              title="rsa-public-key.pem"
+            />
+          </div>
+
+          {/* Signing Secret */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-text-tertiary uppercase tracking-wider">Signing Secret</p>
               <button
                 type="button"
                 onClick={() => { setRotateError(''); setShowRotateModal(true); }}
@@ -63,14 +78,27 @@ export function EventKeysCard({ event }: EventKeysProps) {
                 <RotateCcw size={11} />
                 Rotate
               </button>
-            }
-          />
+            </div>
+            <CodeBlock
+              code={signingSecret}
+              language="bash"
+              title="signing-secret"
+            />
+            <Callout type="warning">
+              Store this securely in your environment variables. Used for release route HMAC verification. <strong>Never</strong> expose this in frontend code.
+            </Callout>
+          </div>
 
-          <CodeBlock
-            code={event.integrationSnippet.trim()}
-            language="bash"
-            title="Install & configure"
-          />
+          {/* Install & Configure snippet */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-text-tertiary uppercase tracking-wider">Install &amp; Configure</p>
+            <CodeBlock
+              code={event.integrationSnippet.trim()}
+              language="ts"
+              title="terminal"
+            />
+          </div>
+
         </div>
       </Card>
 

@@ -47,9 +47,9 @@ export default function DocsLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-full">
+    <div className="flex min-h-full items-start">
       {/* Desktop docs nav */}
-      <aside className="hidden md:flex w-[220px] shrink-0 flex-col border-r border-border-subtle pr-6">
+      <aside className="hidden md:flex w-[240px] shrink-0 flex-col border-r border-border-subtle px-6 sticky top-0 self-start max-h-screen overflow-y-auto py-8">
         {NAV_GROUPS.map((group, i) => (
           <div key={group.title} className={cn('flex flex-col gap-0.5', i > 0 && 'mt-5')}>
             <p className="mb-1 px-3 text-xs font-medium uppercase tracking-wider text-text-tertiary">
@@ -92,7 +92,7 @@ export default function DocsLayout({ children }: { children: ReactNode }) {
       </div>
 
       {/* Content area */}
-      <div className="flex-1 min-w-0 md:pl-8">
+      <div className="flex-1 min-w-0 px-8 py-0">
         <div className="max-w-[720px]">
           {children}
         </div>
