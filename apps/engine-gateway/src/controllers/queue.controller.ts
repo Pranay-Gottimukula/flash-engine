@@ -73,10 +73,11 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   const { eventKey, queueKey, resultKey } = getRedisKeys(publicKey);
 
   let code: number;
-  let position: number | undefined;
+  let position:  number | undefined;
+  let rateLimit: number | undefined;
 
   try {
-    [code, , position] = await redis.queueAdmission(
+    [code, , position, rateLimit] = await redis.queueAdmission(
       eventKey, queueKey, resultKey, Date.now(), userId,
     );
   } catch (err) {
@@ -139,12 +140,17 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
     prisma.queueAttempt.create({
       data: { saleEventId: '', userId, result: 'QUEUED', jti: null },
     }).catch(() => {});
-    const pollUrl = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
+    const pollUrl        = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
+    const queuePos       = position ?? 0;
+    const estimatedWaitMs = rateLimit && rateLimit > 0
+      ? Math.round(queuePos * (1000 / rateLimit))
+      : undefined;
     res.status(202).json({
       status:         'QUEUED',
-      position:       position ?? 0,
+      position:       queuePos,
       pollUrl,
       pollIntervalMs: 2000,
+      ...(estimatedWaitMs !== undefined ? { estimatedWaitMs } : {}),
     });
     return;
   }

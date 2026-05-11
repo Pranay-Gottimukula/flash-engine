@@ -31,6 +31,7 @@ app.use(cors({
     'x-signature',
     'x-timestamp',
     'x-admin-secret',
+    'x-demo-bypass',
   ],
   credentials: true,
 }));

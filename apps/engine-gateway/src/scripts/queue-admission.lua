@@ -70,4 +70,4 @@ end
 redis.call('ZADD', queueKey, nowMs, userId)
 redis.call('HINCRBY', eventKey, 'admitted', 1)
 local position = redis.call('ZRANK', queueKey, userId)
-return {0, 'QUEUED', position}
+return {0, 'QUEUED', position, rateLimit}

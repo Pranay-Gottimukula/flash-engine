@@ -28,13 +28,14 @@ interface LogEntry {
 }
 
 interface Stats {
-  joining:  number;
-  queued:   number;
-  won:      number;
-  soldOut:  number;
-  errors:   number;
-  joinRate: number;
-  winRate:  number;
+  joining:       number;
+  queued:        number;
+  won:           number;
+  drainRejected: number;
+  doorClosed:    number;
+  errors:        number;
+  joinRate:      number;
+  winRate:       number;
 }
 
 interface DotState {
@@ -53,6 +54,12 @@ interface StatItem {
   label: string;
   value: string | number;
   color?: string;
+}
+
+interface EventInfo {
+  stock:     number;
+  rateLimit: number;
+  queueCap:  number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -80,7 +87,7 @@ function formatElapsed(secs: number): string {
 let logSeq = 0;
 
 const INITIAL_STATS: Stats = {
-  joining: 0, queued: 0, won: 0, soldOut: 0, errors: 0, joinRate: 0, winRate: 0,
+  joining: 0, queued: 0, won: 0, drainRejected: 0, doorClosed: 0, errors: 0, joinRate: 0, winRate: 0,
 };
 
 // ── Dot colors (inline style — no Tailwind purge risk with dynamic values) ────
@@ -166,20 +173,21 @@ export default function DemoPage() {
   const [dotStates,  setDotStates]  = useState<DotState[]>([]);
   const [log,        setLog]        = useState<LogEntry[]>([]);
   const [tooltip,    setTooltip]    = useState<TooltipInfo | null>(null);
+  const [eventInfo,  setEventInfo]  = useState<EventInfo | null>(null);
+  const [eventError, setEventError] = useState<string | null>(null);
 
   // Simulation refs — mutated in place, never trigger re-renders
-  const statsRef       = useRef<Stats>({ ...INITIAL_STATS });
-  const userStatesRef  = useRef<Map<string, UserState>>(new Map());
-  const userOrderRef   = useRef<string[]>([]);
-  const joinTs         = useRef<number[]>([]);  // join request timestamps
-  const winTs          = useRef<number[]>([]);  // win event timestamps
-  const joinTimers     = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const pollTimers     = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
-  const updateTimer    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef   = useRef<number>(0);
-  const joinInFlight   = useRef(0);
-  const pollInFlight   = useRef(0);
-  const isRunningRef   = useRef(false);
+  const statsRef      = useRef<Stats>({ ...INITIAL_STATS });
+  const userStatesRef = useRef<Map<string, UserState>>(new Map());
+  const userOrderRef  = useRef<string[]>([]);
+  const joinTs        = useRef<number[]>([]);
+  const winTs         = useRef<number[]>([]);
+  const joinTimers    = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const pollTimers    = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const updateTimer   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startTimeRef  = useRef<number>(0);
+  const joinInFlight  = useRef(0);
+  const isRunningRef  = useRef(false);
 
   const logEndRef = useRef<HTMLDivElement>(null);
 
@@ -199,7 +207,7 @@ export default function DemoPage() {
   useEffect(() => {
     return () => {
       for (const t of joinTimers.current) clearTimeout(t);
-      for (const t of pollTimers.current.values()) clearInterval(t);
+      for (const t of pollTimers.current.values()) clearTimeout(t);
       if (updateTimer.current) clearInterval(updateTimer.current);
     };
   }, []);
@@ -211,7 +219,6 @@ export default function DemoPage() {
     updateTimer.current = setInterval(() => {
       const now = Date.now();
 
-      // Prune old timestamps (keep 5s window, compute over 3s)
       joinTs.current = joinTs.current.filter(t => now - t < 5_000);
       winTs.current  = winTs.current.filter(t => now - t < 5_000);
 
@@ -249,8 +256,8 @@ export default function DemoPage() {
     for (const t of joinTimers.current) clearTimeout(t);
     joinTimers.current = [];
 
-    for (const t of pollTimers.current.values()) clearInterval(t);
-    pollTimers.current = new Map();
+    pollTimers.current.forEach(t => clearTimeout(t));
+    pollTimers.current.clear();
 
     if (updateTimer.current) {
       clearInterval(updateTimer.current);
@@ -264,79 +271,81 @@ export default function DemoPage() {
 
   const reset = useCallback(() => {
     stopSimulation();
-    userStatesRef.current  = new Map();
-    userOrderRef.current   = [];
-    statsRef.current       = { ...INITIAL_STATS };
-    joinTs.current         = [];
-    winTs.current          = [];
-    joinInFlight.current   = 0;
-    pollInFlight.current   = 0;
+    userStatesRef.current = new Map();
+    userOrderRef.current  = [];
+    statsRef.current      = { ...INITIAL_STATS };
+    joinTs.current        = [];
+    winTs.current         = [];
+    joinInFlight.current  = 0;
     setStats({ ...INITIAL_STATS });
     setTotalUsers(0);
     setElapsed(0);
     setLog([]);
     setDotStates([]);
     setTooltip(null);
+    setEventInfo(null);
+    setEventError(null);
   }, [stopSimulation]);
 
-  // ── Polling ───────────────────────────────────────────────────────────────
+  // ── Polling (setTimeout-based, self-rescheduling) ─────────────────────────
 
   const startPolling = useCallback((userId: string, pk: string, baseUrl: string, interval: number) => {
-    const jitter = () => (Math.random() - 0.5) * 600;
-    let lastPosition: number | undefined;
+    const jitter = () => Math.floor(Math.random() * 600) - 300; // ±300ms
 
     const poll = async () => {
       if (!isRunningRef.current) return;
-      while (pollInFlight.current >= 20) await sleep(50);
-      if (!isRunningRef.current) return;
 
-      pollInFlight.current++;
+      const user = userStatesRef.current.get(userId);
+      if (!user || user.status !== 'queued') return;
+
       try {
-        const res  = await fetch(`${baseUrl}/api/queue/status?pk=${encodeURIComponent(pk)}&userId=${encodeURIComponent(userId)}`);
+        const res  = await fetch(`${baseUrl}/api/queue/status?pk=${encodeURIComponent(pk)}&userId=${encodeURIComponent(userId)}`, {
+          headers: { 'x-demo-bypass': 'true' },
+        });
         const data = await res.json() as Record<string, unknown>;
 
-        const user = userStatesRef.current.get(userId);
-        if (!user || user.status === 'won' || user.status === 'sold_out') return;
+        // Re-check after await in case state changed while fetching
+        const current = userStatesRef.current.get(userId);
+        if (!current || current.status !== 'queued') return;
 
         const result = (data.result ?? data.status) as string | undefined;
 
         if (result === 'WON') {
-          userStatesRef.current.set(userId, { ...user, status: 'won', token: data.token as string });
+          userStatesRef.current.set(userId, { ...current, status: 'won', token: data.token as string });
           statsRef.current.queued = Math.max(0, statsRef.current.queued - 1);
           statsRef.current.won++;
           winTs.current.push(Date.now());
           pushLog(userId, 'WON', `token: ${String(data.token ?? '').slice(0, 20)}`);
-          const t = pollTimers.current.get(userId);
-          if (t) clearInterval(t);
           pollTimers.current.delete(userId);
+          return; // stop polling
+        }
 
-        } else if (result === 'SOLD_OUT') {
-          userStatesRef.current.set(userId, { ...user, status: 'sold_out' });
-          statsRef.current.queued = Math.max(0, statsRef.current.queued - 1);
-          statsRef.current.soldOut++;
-          pushLog(userId, 'SOLD_OUT', '');
-          const t = pollTimers.current.get(userId);
-          if (t) clearInterval(t);
+        if (result === 'SOLD_OUT') {
+          userStatesRef.current.set(userId, { ...current, status: 'sold_out' });
+          statsRef.current.queued        = Math.max(0, statsRef.current.queued - 1);
+          statsRef.current.drainRejected++;
+          pushLog(userId, 'SOLD_OUT', 'drain rejected');
           pollTimers.current.delete(userId);
+          return; // stop polling
+        }
 
-        } else if (result === 'QUEUED') {
-          const pos  = (data.position ?? data.queuePosition) as number | undefined;
-          const wait = (data.estimatedWait ?? data.waitSeconds) as number | undefined;
-          if (pos !== lastPosition) {
-            lastPosition = pos;
-            userStatesRef.current.set(userId, { ...user, position: pos });
-            pushLog(userId, 'QUEUED', `position: ${pos ?? '?'}${wait ? `, ~${wait}s wait` : ''}`);
+        if (result === 'QUEUED') {
+          const pos = (data.position ?? data.queuePosition) as number | undefined;
+          if (pos !== current.position) {
+            userStatesRef.current.set(userId, { ...current, position: pos });
           }
         }
       } catch {
-        // Swallow poll errors — log spam is worse than silence
-      } finally {
-        pollInFlight.current--;
+        // network error — keep polling
       }
+
+      const timerId = setTimeout(poll, interval + jitter());
+      pollTimers.current.set(userId, timerId);
     };
 
-    const timer = setInterval(poll, Math.max(500, interval + jitter()));
-    pollTimers.current.set(userId, timer);
+    // Start first poll after one interval
+    const timerId = setTimeout(poll, interval + jitter());
+    pollTimers.current.set(userId, timerId);
   }, [pushLog]);
 
   // ── Join ──────────────────────────────────────────────────────────────────
@@ -353,7 +362,10 @@ export default function DemoPage() {
     try {
       const res  = await fetch(`${baseUrl}/api/queue/join`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type':  'application/json',
+          'x-demo-bypass': 'true',
+        },
         body:    JSON.stringify({ publicKey: pk, userId }),
       });
       const data = await res.json() as Record<string, unknown>;
@@ -376,9 +388,10 @@ export default function DemoPage() {
         startPolling(userId, pk, baseUrl, interval);
 
       } else if (result === 'SOLD_OUT') {
+        // queueCap was hit — user never entered the queue
         userStatesRef.current.set(userId, { id: userId, status: 'sold_out' });
-        statsRef.current.soldOut++;
-        pushLog(userId, 'SOLD_OUT', '');
+        statsRef.current.doorClosed++;
+        pushLog(userId, 'SOLD_OUT', 'door closed');
 
       } else if (result === 'ALREADY_JOINED') {
         userStatesRef.current.set(userId, { id: userId, status: 'queued' });
@@ -403,28 +416,55 @@ export default function DemoPage() {
 
   // ── Start ─────────────────────────────────────────────────────────────────
 
-  const start = useCallback(() => {
+  const start = useCallback(async () => {
     if (!apiUrl || !publicKey) return;
+
+    setEventError(null);
+
+    // Verify event is active and capture config before starting
+    try {
+      const infoRes  = await fetch(`${apiUrl}/api/queue/info?pk=${encodeURIComponent(publicKey)}`, {
+        headers: { 'x-demo-bypass': 'true' },
+      });
+      const infoData = await infoRes.json() as Record<string, unknown>;
+
+      if (infoData.status !== 'ACTIVE') {
+        setEventError(
+          `Event is not ACTIVE. Current status: ${String(infoData.status ?? 'unknown')}. Activate it in the dashboard first.`
+        );
+        return;
+      }
+
+      setEventInfo({
+        stock:     infoData.stock     as number,
+        rateLimit: infoData.rateLimit as number,
+        queueCap:  infoData.queueCap  as number,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setEventError(`Failed to fetch event info: ${msg}. Check your API URL and public key.`);
+      return;
+    }
+
     const snap = { apiUrl, publicKey, numUsers, rampUpSecs, pollIntervalMs };
 
     // Clear any previous run
     for (const t of joinTimers.current) clearTimeout(t);
     joinTimers.current = [];
-    for (const t of pollTimers.current.values()) clearInterval(t);
-    pollTimers.current = new Map();
+    pollTimers.current.forEach(t => clearTimeout(t));
+    pollTimers.current.clear();
     if (updateTimer.current) clearInterval(updateTimer.current);
 
     const userIds = Array.from({ length: snap.numUsers }, (_, i) => `demo_user_${padId(i + 1)}`);
 
-    userStatesRef.current  = new Map();
-    userOrderRef.current   = userIds;
-    statsRef.current       = { ...INITIAL_STATS };
-    joinTs.current         = [];
-    winTs.current          = [];
-    joinInFlight.current   = 0;
-    pollInFlight.current   = 0;
-    isRunningRef.current   = true;
-    startTimeRef.current   = Date.now();
+    userStatesRef.current = new Map();
+    userOrderRef.current  = userIds;
+    statsRef.current      = { ...INITIAL_STATS };
+    joinTs.current        = [];
+    winTs.current         = [];
+    joinInFlight.current  = 0;
+    isRunningRef.current  = true;
+    startTimeRef.current  = Date.now();
 
     setStats({ ...INITIAL_STATS });
     setTotalUsers(snap.numUsers);
@@ -448,22 +488,25 @@ export default function DemoPage() {
 
   // ── Derived display ───────────────────────────────────────────────────────
 
-  const resolved   = stats.won + stats.soldOut;
-  const wonPct     = totalUsers > 0 ? (stats.won     / totalUsers) * 100 : 0;
-  const soldOutPct = totalUsers > 0 ? (stats.soldOut / totalUsers) * 100 : 0;
+  const resolved         = stats.won + stats.drainRejected + stats.doorClosed;
+  const wonPct           = totalUsers > 0 ? (stats.won           / totalUsers) * 100 : 0;
+  const drainRejectedPct = totalUsers > 0 ? (stats.drainRejected / totalUsers) * 100 : 0;
+  const doorClosedPct    = totalUsers > 0 ? (stats.doorClosed    / totalUsers) * 100 : 0;
 
   const handleDotHover = useCallback((info: TooltipInfo | null) => setTooltip(info), []);
 
   const statItems: StatItem[] = [
-    { label: 'Total',    value: totalUsers },
-    { label: 'Joining',  value: stats.joining },
-    { label: 'Queued',   value: stats.queued },
-    { label: 'Won',      value: stats.won,      color: 'text-accent' },
-    { label: 'Sold Out', value: stats.soldOut,  color: 'text-red-400' },
-    { label: 'Errors',   value: stats.errors,   color: stats.errors > 0 ? 'text-yellow-400' : undefined },
-    { label: 'Join/s',   value: stats.joinRate.toFixed(1) },
-    { label: 'Win/s',    value: stats.winRate.toFixed(1),  color: 'text-accent' },
-    { label: 'Time',     value: formatElapsed(elapsed) },
+    { label: 'Total',          value: totalUsers },
+    { label: 'Joining',        value: stats.joining },
+    { label: 'In Queue Now',   value: stats.queued,        color: 'text-yellow-400' },
+    { label: 'Won',            value: stats.won,           color: 'text-accent' },
+    { label: 'Drain Rejected', value: stats.drainRejected, color: 'text-red-600' },
+    { label: 'Door Closed',    value: stats.doorClosed,    color: 'text-red-400' },
+    { label: 'Errors',         value: stats.errors,        color: stats.errors > 0 ? 'text-yellow-400' : undefined },
+    { label: 'Queue Cap',      value: eventInfo?.queueCap ?? '—' },
+    { label: 'Join/s',         value: stats.joinRate.toFixed(1) },
+    { label: 'Win/s',          value: stats.winRate.toFixed(1), color: 'text-accent' },
+    { label: 'Time',           value: formatElapsed(elapsed) },
   ];
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -604,11 +647,29 @@ export default function DemoPage() {
                 Reset
               </Button>
             </div>
+
+            {/* Event status feedback */}
+            {eventError && (
+              <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+                {eventError}
+              </p>
+            )}
+            {eventInfo && (
+              <p className="text-xs text-text-tertiary">
+                Event:{' '}
+                <span className="font-mono text-text-secondary">{eventInfo.stock}</span> items in stock
+                {' · '}
+                <span className="font-mono text-text-secondary">{eventInfo.rateLimit}</span>/s rate limit
+                {' · '}
+                Queue cap:{' '}
+                <span className="font-mono text-text-secondary">{eventInfo.queueCap}</span> users
+              </p>
+            )}
           </div>
         </Card>
 
-        {/* ── Stats row (9 cards) ───────────────────────────────────────────── */}
-        <div className="grid grid-cols-3 gap-2 sm:grid-cols-9">
+        {/* ── Stats row (11 cards) ──────────────────────────────────────────── */}
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6 lg:grid-cols-11">
           {statItems.map(item => (
             <div
               key={item.label}
@@ -630,9 +691,15 @@ export default function DemoPage() {
                 className="absolute left-0 top-0 h-full bg-accent"
                 style={{ width: `${wonPct}%`, transition: 'width 300ms ease' }}
               />
+              {/* Dark red = drain rejected (was queued, stock ran out) */}
+              <div
+                className="absolute top-0 h-full bg-red-700"
+                style={{ left: `${wonPct}%`, width: `${drainRejectedPct}%`, transition: 'left 300ms ease, width 300ms ease' }}
+              />
+              {/* Lighter red = door closed (hit queueCap, never entered) */}
               <div
                 className="absolute top-0 h-full bg-red-500"
-                style={{ left: `${wonPct}%`, width: `${soldOutPct}%`, transition: 'left 300ms ease, width 300ms ease' }}
+                style={{ left: `${wonPct + drainRejectedPct}%`, width: `${doorClosedPct}%`, transition: 'left 300ms ease, width 300ms ease' }}
               />
               <div className="absolute inset-0 flex items-center justify-center">
                 <span className="text-xs font-semibold text-text-primary drop-shadow">
@@ -640,14 +707,18 @@ export default function DemoPage() {
                 </span>
               </div>
             </div>
-            <div className="mt-1.5 flex items-center gap-4 text-xs text-text-tertiary">
+            <div className="mt-1.5 flex flex-wrap items-center gap-4 text-xs text-text-tertiary">
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 rounded-full bg-accent" />
                 {stats.won} won
               </span>
               <span className="flex items-center gap-1.5">
+                <span className="inline-block h-2 w-2 rounded-full bg-red-700" />
+                {stats.drainRejected} drain rejected
+              </span>
+              <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
-                {stats.soldOut} sold out
+                {stats.doorClosed} door closed
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block h-2 w-2 rounded-full bg-yellow-400" />

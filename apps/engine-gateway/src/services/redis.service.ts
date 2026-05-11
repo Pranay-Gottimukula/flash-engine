@@ -177,7 +177,7 @@ declare module 'ioredis' {
       resultKey: string,
       nowMs:     number,
       userId:    string,
-    ): Promise<[number, string, number?]>;
+    ): Promise<[number, string, number?, number?]>;
   }
 }
 
