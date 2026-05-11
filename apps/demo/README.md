@@ -1,86 +1,102 @@
-# FlashEngine Demo Suite
+# FlashEngine — Minimal SDK Integration Demo
 
-Two demo tools for testing and showcasing the Flash Sale Engine.
+A lightweight implementation demonstrating real FlashEngine integration.
+Uses `@flashengine/browser` and `@flashengine/server` via local path imports.
 
----
+## Setup
 
-## Traffic Simulator (built into dashboard)
-
-**URL:** `{dashboard}/demo`
-
-Tests queue throughput with 50–500 virtual users. Shows the dot grid visualization — each dot represents one simulated user, colour-coded by state (joining → queued → won / sold out).
-
-No separate setup needed — runs entirely in the dashboard. Point it at any active event by pasting the public key.
-
----
-
-## Demo Storefront (demo-client + demo-server)
-
-Simulates a real e-commerce integration. Shows the complete purchase flow as a single customer:
-
-1. Customer joins queue → waits → wins a purchase token
-2. Customer clicks checkout → demo-server calls `/verify` → token redeemed in DB
-3. Customer can simulate payment failure → demo-server calls `/release` → stock restored to pool
-
-### Quick Start
+### 1. Build the SDKs (required first)
 
 ```bash
-# Terminal 1: engine-gateway (must be running)
-cd apps/engine-gateway && npm run dev
+cd packages/browser-sdk && npm install && npm run build
+cd packages/server-sdk && npm install && npm run build
+```
 
-# Terminal 2: demo server (mock e-commerce backend)
+### 2. Configure demo-server
+
+```bash
 cd apps/demo/demo-server
 cp .env.example .env
-# Edit .env: set EVENT_PUBLIC_KEY and EVENT_SIGNING_SECRET from your event detail page
-npm install && npm run dev
+# Fill in EVENT_PUBLIC_KEY and EVENT_SIGNING_SECRET from your FlashEngine dashboard
+npm install
+npm run dev
+```
 
-# Terminal 3: demo client (mock storefront)
+### 3. Configure demo-client
+
+```bash
 cd apps/demo/demo-client
 cp .env.example .env
-# Edit .env: set VITE_EVENT_PUBLIC_KEY (same public key as above)
-npm install && npm run dev
-
-# Open http://localhost:3001 in browser
+# Fill in VITE_EVENT_PUBLIC_KEY (same value as EVENT_PUBLIC_KEY above)
+npm install
+npm run dev
 ```
 
-Or skip the `.env` entirely — pass everything via URL params:
+## Environment Variables
+
+### demo-server (`apps/demo/demo-server/.env`)
+
+| Variable | Description | Default |
+|---|---|---|
+| `ENGINE_API_URL` | FlashEngine gateway URL | `http://localhost:3000` |
+| `EVENT_PUBLIC_KEY` | Event public key (from dashboard) | — |
+| `EVENT_SIGNING_SECRET` | Signing secret for HMAC (from dashboard) | — |
+| `PORT` | Port to listen on | `4000` |
+
+### demo-client (`apps/demo/demo-client/.env`)
+
+| Variable | Description | Default |
+|---|---|---|
+| `VITE_ENGINE_API_URL` | FlashEngine gateway URL | `http://localhost:3000` |
+| `VITE_DEMO_SERVER_URL` | demo-server URL | `http://localhost:4000` |
+| `VITE_EVENT_PUBLIC_KEY` | Event public key (pre-fills the config form) | — |
+
+## SDK Integration
+
+### demo-server → `@flashengine/server`
+
+```ts
+import { FlashEngine, FlashEngineError } from '@flashengine/server';
+
+const engine = new FlashEngine({
+  publicKey:     process.env.EVENT_PUBLIC_KEY!,
+  signingSecret: process.env.EVENT_SIGNING_SECRET!,
+  apiUrl:        process.env.ENGINE_API_URL ?? 'http://localhost:3000',
+});
+
+// Verify a purchase JWT
+const result = await engine.verifyToken(token);
+
+// Release a ticket back to the pool
+await engine.releaseTicket(jti, 'PAYMENT_FAILED');
+```
+
+### demo-client → `@flashengine/browser`
+
+```ts
+import { FlashQueue } from '@flashengine/browser';
+
+const queue = new FlashQueue({ apiUrl, publicKey, userId });
+
+queue.on('won',      ({ token })     => { /* proceed to checkout */ });
+queue.on('queued',   ({ position })  => { /* show position in queue */ });
+queue.on('sold_out', ()              => { /* show sold-out page */ });
+queue.on('error',    ({ message })   => { /* handle error */ });
+
+await queue.join();
+```
+
+## Architecture
 
 ```
-http://localhost:3001?pk=YOUR_PUBLIC_KEY&engine=http://localhost:3000&server=http://localhost:4000
+demo-client (Vite + React)
+    │
+    ├── @flashengine/browser  ──► FlashEngine Gateway (engine-gateway)
+    │   └── FlashQueue.join()      /api/queue/join, /api/queue/status
+    │
+    └── fetch → demo-server ──────────────────────────────────────────
+                    │
+                    └── @flashengine/server ──► FlashEngine Gateway
+                        ├── engine.verifyToken()   /api/queue/verify
+                        └── engine.releaseTicket() /api/queue/release
 ```
-
-### Environment Variables
-
-**demo-server** (`apps/demo/demo-server/.env`):
-
-| Variable | Description |
-|---|---|
-| `ENGINE_API_URL` | engine-gateway URL (default: `http://localhost:3000`) |
-| `EVENT_PUBLIC_KEY` | Public key from the event detail page |
-| `EVENT_SIGNING_SECRET` | Signing secret from the event detail page — used to sign HMAC on `/release` calls |
-| `PORT` | Port to listen on (default: `4000`) |
-
-**demo-client** (`apps/demo/demo-client/.env`):
-
-| Variable | Description |
-|---|---|
-| `VITE_ENGINE_API_URL` | engine-gateway URL (default: `http://localhost:3000`) |
-| `VITE_DEMO_SERVER_URL` | demo-server URL (default: `http://localhost:4000`) |
-| `VITE_EVENT_PUBLIC_KEY` | Public key (can also be passed as `?pk=` URL param) |
-
----
-
-### What to Show Interviewers
-
-1. Open the demo storefront (`http://localhost:3001`) in one browser window
-2. Open the dashboard event detail page in another window
-3. Walk through the full flow:
-   - Click **Join the Queue** → watch queue position count down
-   - Win a token → see the JWT and JTI displayed in the debug panel
-   - Click **Complete Purchase** → watch demo-server verify the token → order confirmed
-4. Click **"Try to buy again with same token"** — show the **409 double-spend prevention** (this is a feature, not a bug)
-5. Reset: join as a new user → win → click **Simulate Payment Failure**
-   - Watch demo-server call `/release` with HMAC signature
-   - Stock is atomically returned to the pool
-6. Open the demo-server terminal — every verify/release call is logged with HMAC construction steps in colour
-7. Switch to the dashboard event detail page — stats (queue depth, admitted, released) update in real time

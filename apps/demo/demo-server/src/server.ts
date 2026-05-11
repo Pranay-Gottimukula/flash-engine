@@ -1,8 +1,8 @@
-import crypto from "crypto";
 import dotenv from "dotenv";
 import express, { Request, Response } from "express";
 import cors from "cors";
-import type { CheckoutBody, FailBody, VerifyResponse } from "./types";
+import { FlashEngine, FlashEngineError } from "@flashengine/server";
+import type { CheckoutBody, FailBody } from "./types";
 
 dotenv.config();
 
@@ -10,10 +10,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const ENGINE_API_URL    = process.env.ENGINE_API_URL       ?? "http://localhost:3000";
-const EVENT_PUBLIC_KEY  = process.env.EVENT_PUBLIC_KEY     ?? "";
+const ENGINE_API_URL       = process.env.ENGINE_API_URL       ?? "http://localhost:4000";
+const EVENT_PUBLIC_KEY     = process.env.EVENT_PUBLIC_KEY     ?? "";
 const EVENT_SIGNING_SECRET = process.env.EVENT_SIGNING_SECRET ?? "";
-const PORT              = process.env.PORT                 ?? "4000";
+const PORT                 = process.env.PORT                 ?? "4001";
+
+// ── SDK instance ───────────────────────────────────────────────────────────────
+const engine = new FlashEngine({
+  publicKey:     EVENT_PUBLIC_KEY,
+  signingSecret: EVENT_SIGNING_SECRET,
+  apiUrl:        ENGINE_API_URL,
+});
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
 const C = {
@@ -75,68 +82,54 @@ class RequestLog {
 app.post("/api/checkout", async (req: Request, res: Response) => {
   const { token, userId } = req.body as CheckoutBody;
 
-  // Peek at whether this is likely a double-spend (token already used)
   const log = new RequestLog("POST", "/api/checkout");
 
   log.step(`userId: ${userId}`);
   log.step(`Verifying token with engine…`);
 
-  let verifyRes: globalThis.Response;
+  let jti: string;
   try {
-    verifyRes = await fetch(`${ENGINE_API_URL}/api/queue/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-public-key": EVENT_PUBLIC_KEY },
-      body: JSON.stringify({ token }),
-    });
+    const result = await engine.verifyToken(token);
+    jti = result.jti;
+    log.step(`Engine responded: 200 { valid: true, jti: ${jti} }`, C.green);
   } catch (err) {
+    if (err instanceof FlashEngineError) {
+      if (err.code === "TOKEN_USED") {
+        log.step(`Engine responded: 409 TOKEN_ALREADY_USED`, C.red);
+        log.done("Double-spend prevented!", false);
+        logStore[0] && (logStore[0].route = "/api/checkout (DUPLICATE)");
+        res.status(409).json({ error: "TOKEN_ALREADY_USED", message: "This purchase token has already been redeemed." });
+        return;
+      }
+      if (err.code === "PK_MISMATCH" || err.code === "INVALID_TOKEN") {
+        log.step(`Engine responded: ${err.statusCode ?? 400} (invalid/expired token)`, C.red);
+        log.done("Token invalid or expired", false);
+        res.status(400).json({ error: "INVALID_TOKEN", message: "Invalid or expired token." });
+        return;
+      }
+      if (err.code === "NETWORK_ERROR") {
+        log.done(`Engine unreachable: ${err.message}`, false);
+        res.status(500).json({ error: "ENGINE_UNREACHABLE", message: err.message });
+        return;
+      }
+      log.step(`Engine responded: ${err.statusCode ?? 500} ${err.message}`, C.red);
+      log.done(`Unexpected engine error (${err.statusCode ?? 500})`, false);
+      res.status(500).json({ error: "ENGINE_ERROR", message: err.message, status: err.statusCode });
+      return;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     log.done(`Engine unreachable: ${msg}`, false);
     res.status(500).json({ error: "ENGINE_UNREACHABLE", message: msg });
     return;
   }
 
-  const status = verifyRes.status;
+  const delay = 1000 + Math.random() * 1000;
+  log.step(`Simulating payment (${(delay / 1000).toFixed(1)}s delay)…`);
+  await new Promise<void>((r) => setTimeout(r, delay));
 
-  if (status === 200) {
-    let body: VerifyResponse = {};
-    try { body = await verifyRes.json() as VerifyResponse; } catch { /* empty */ }
-    log.step(`Engine responded: 200 { valid: true, jti: ${body.jti ?? "?"} }`, C.green);
-
-    const delay = 1000 + Math.random() * 1000;
-    log.step(`Simulating payment (${(delay / 1000).toFixed(1)}s delay)…`);
-    await new Promise<void>((r) => setTimeout(r, delay));
-
-    const orderId = "ORD-" + Math.floor(100_000 + Math.random() * 900_000);
-    log.done(`Order confirmed: ${orderId}`, true);
-    res.status(200).json({ success: true, orderId, message: "Payment successful!" });
-    return;
-  }
-
-  if (status === 409) {
-    let body: unknown;
-    try { body = await verifyRes.json(); } catch { body = {}; }
-    log.step(`Engine responded: 409 ${JSON.stringify(body)}`, C.red);
-    log.done("Double-spend prevented!", false);
-
-    // Re-tag this log record as DUPLICATE for clarity
-    logStore[0] && (logStore[0].route = "/api/checkout (DUPLICATE)");
-
-    res.status(409).json({ error: "TOKEN_ALREADY_USED", message: "This purchase token has already been redeemed." });
-    return;
-  }
-
-  if (status === 400 || status === 401) {
-    log.step(`Engine responded: ${status} (invalid/expired token)`, C.red);
-    log.done("Token invalid or expired", false);
-    res.status(400).json({ error: "INVALID_TOKEN", message: "Invalid or expired token." });
-    return;
-  }
-
-  let upstream: unknown;
-  try { upstream = await verifyRes.json(); } catch { upstream = {}; }
-  log.step(`Engine responded: ${status} ${JSON.stringify(upstream)}`, C.red);
-  log.done(`Unexpected engine error (${status})`, false);
-  res.status(500).json({ error: "ENGINE_ERROR", upstream, status });
+  const orderId = "ORD-" + Math.floor(100_000 + Math.random() * 900_000);
+  log.done(`Order confirmed: ${orderId}`, true);
+  res.status(200).json({ success: true, orderId, message: "Payment successful!" });
 });
 
 // ── POST /api/checkout/fail ───────────────────────────────────────────────────
@@ -146,53 +139,24 @@ app.post("/api/checkout/fail", async (req: Request, res: Response) => {
   const log = new RequestLog("POST", "/api/checkout/fail");
 
   log.step(`jti: ${jti}  reason: ${reason}`);
-  log.step("Constructing HMAC…", C.yellow);
+  log.step("Calling engine /api/queue/release via SDK…", C.yellow);
 
-  const bodyStr   = JSON.stringify({ jti, reason });
-  const timestamp = Date.now().toString();
-  const message   = `${timestamp}.${bodyStr}`;
-  const signature = crypto
-    .createHmac("sha256", EVENT_SIGNING_SECRET)
-    .update(message)
-    .digest("hex");
-
-  log.step(`Timestamp : ${timestamp}`, C.yellow);
-  log.step(`Message   : ${message.slice(0, 80)}${message.length > 80 ? "…" : ""}`, C.yellow);
-  log.step(`Signature : sha256=${signature}`, C.yellow);
-  log.step(`Calling engine /api/queue/release…`);
-
-  let releaseRes: globalThis.Response;
   try {
-    releaseRes = await fetch(`${ENGINE_API_URL}/api/queue/release`, {
-      method: "POST",
-      headers: {
-        "Content-Type":  "application/json",
-        "x-public-key":  EVENT_PUBLIC_KEY,
-        "x-signature":   `sha256=${signature}`,
-        "x-timestamp":   timestamp,
-      },
-      body: bodyStr,
-    });
+    const result = await engine.releaseTicket(jti, reason);
+    log.step(`Engine responded: 200 ${JSON.stringify(result)}`, C.green);
+    log.done("Stock released back to pool", true);
+    res.status(200).json(result);
   } catch (err) {
+    if (err instanceof FlashEngineError) {
+      log.step(`Engine responded: ${err.statusCode ?? 500} ${err.message}`, C.red);
+      log.done(`Release failed (${err.statusCode ?? 500})`, false);
+      res.status(err.statusCode ?? 500).json({ error: err.code, message: err.message });
+      return;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     log.done(`Engine unreachable: ${msg}`, false);
     res.status(500).json({ error: "ENGINE_UNREACHABLE", message: msg });
-    return;
   }
-
-  const releaseStatus = releaseRes.status;
-  let releaseBody: unknown;
-  try { releaseBody = await releaseRes.json(); } catch { releaseBody = {}; }
-
-  if (releaseStatus >= 200 && releaseStatus < 300) {
-    log.step(`Engine responded: ${releaseStatus} ${JSON.stringify(releaseBody)}`, C.green);
-    log.done("Stock released back to pool", true);
-  } else {
-    log.step(`Engine responded: ${releaseStatus} ${JSON.stringify(releaseBody)}`, C.red);
-    log.done(`Release failed (${releaseStatus})`, false);
-  }
-
-  res.status(releaseStatus).json(releaseBody);
 });
 
 // ── GET /api/health ───────────────────────────────────────────────────────────
@@ -216,6 +180,7 @@ function printBanner() {
     `  Engine: ${ENGINE_API_URL}`,
     `  PubKey: ${pkShort}`,
     `  Secret: ${secOk}`,
+    `  SDK: @flashengine/server`,
   ];
 
   const width  = Math.max(...lines.map((l) => l.length)) + 2;
