@@ -280,14 +280,12 @@ async function seedRedis(params: {
   // The private key stays in Postgres only and is loaded into the
   // Node process cache on activation via warmEventCache().
   const pipeline = redis.pipeline();
-  pipeline.hset(key, 'status',           'PENDING');
-  pipeline.hset(key, 'stock',            String(stockCount));
-  pipeline.hset(key, 'rateLimit',        String(rateLimit));
-  pipeline.hset(key, 'bucketTokens',     String(rateLimit));  // start full
-  pipeline.hset(key, 'bucketLastRefill', String(Date.now()));
-  pipeline.hset(key, 'eventId',          eventId);            // for audit log
-  pipeline.hset(key, 'admitted',         '0');
-  pipeline.hset(key, 'queueCap',         String(queueCap));
+  pipeline.hset(key, 'status',    'PENDING');
+  pipeline.hset(key, 'stock',     String(stockCount));
+  pipeline.hset(key, 'rateLimit', String(rateLimit));
+  pipeline.hset(key, 'eventId',   eventId);
+  pipeline.hset(key, 'admitted',  '0');
+  pipeline.hset(key, 'queueCap',  String(queueCap));
   pipeline.expire(key, 48 * 60 * 60);                         // 48hr TTL safety net
   await pipeline.exec();
 }

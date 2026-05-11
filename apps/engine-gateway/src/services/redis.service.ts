@@ -87,7 +87,7 @@ redis.on('close',        () => console.warn('⚠️  Redis connection closed'));
 // explicitly so we can:
 //   a) Fail fast if Redis is unreachable at startup (rather than on the first
 //      real request, which would result in a confusing 500 to an end-user).
-//   b) Guarantee the Lua script (leakyBucket) is registered before any
+//   b) Guarantee the Lua scripts are registered before any
 //      queue/join request arrives.
 //
 // The outer try/catch in server.ts lets you decide the startup policy:
@@ -102,18 +102,17 @@ export async function connectRedis(): Promise<void> {
   await redis.connect();
 }
 
-// ── Lua Script: Leaky Bucket Rate Limiter + Stock Decrement ───────────────────
+// ── Lua Script: Queue Admission ───────────────────────────────────────────────
 //
 // CONTEXT — Why Lua?
 //
-//   A flash sale join request requires three operations that must be atomic:
+//   A flash sale join request requires these operations atomically:
 //     1. Check event status  (HGET flash:event:{key} status)
-//     2. Apply rate limit    (Leaky Bucket: check & update token bucket)
-//     3. Decrement stock     (HINCRBY flash:event:{key} stock -1)
+//     2. Check duplicate     (ZSCORE queue, HEXISTS result)
+//     3. Check queueCap      (admitted >= queueCap → SOLD_OUT)
+//     4. Enqueue             (ZADD queue, HINCRBY admitted)
 //
-//   If we do these as separate Redis calls, two concurrent requests can both
-//   pass the rate check and both decrement stock — classic TOCTOU race.
-//   Lua scripts run atomically on a single Redis thread, eliminating the race.
+//   Lua scripts run atomically on a single Redis thread, eliminating TOCTOU races.
 //
 // HOW redis.defineCommand() WORKS
 //
@@ -122,47 +121,8 @@ export async function connectRedis(): Promise<void> {
 //   This means you get automatic script caching without manually calling
 //   SCRIPT LOAD at startup.
 //
-//   TODO: Replace the placeholder script below with your real Leaky Bucket Lua.
-//
-// LEAKY BUCKET ALGORITHM (pseudocode for the Lua you'll write):
-//
-//   local key     = KEYS[1]          -- "flash:event:{publicKey}"
-//   local now     = tonumber(ARGV[1]) -- Unix timestamp ms (from Node)
-//   local cost    = 1                 -- tokens consumed per join request
-//
-//   local event   = redis.call('HMGET', key, 'status', 'stock', 'rateLimit',
-//                                            'bucketTokens', 'bucketLastRefill')
-//
-//   if event[1] ~= 'ACTIVE' then
-//     return {-3, 'EVENT_NOT_ACTIVE'}   -- caller maps -3 → 403
-//   end
-//
-//   -- Refill tokens based on elapsed time
-//   local elapsed    = now - tonumber(event[5])
-//   local rateLimit  = tonumber(event[3])
-//   local tokens     = math.min(rateLimit,
-//                        tonumber(event[4]) + (elapsed / 1000) * rateLimit)
-//
-//   if tokens < cost then
-//     return {-2, 'RATE_LIMITED'}       -- caller maps -2 → 429
-//   end
-//
-//   if tonumber(event[2]) <= 0 then
-//     return {-1, 'SOLD_OUT'}           -- caller maps -1 → 410
-//   end
-//
-//   -- Atomically consume one token and one stock unit
-//   redis.call('HSET', key,
-//     'bucketTokens',     tokens - cost,
-//     'bucketLastRefill', now,
-//     'stock',            tonumber(event[2]) - 1)
-//
-//   return {1, 'WON'}                   -- caller issues JWT
-//
 // ──────────────────────────────────────────────────────────────────────────────
 
-// TODO: Uncomment and implement once you have written the Lua script.
-//
 
 const QUEUE_ADMISSION_LUA = readFileSync(
   join(__dirname, '../scripts/queue-admission.lua'),

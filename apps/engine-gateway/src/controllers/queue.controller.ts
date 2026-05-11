@@ -30,12 +30,11 @@
 //   });
 // ──────────────────────────────────────────────────────────────────────────────
 
-import { Request, Response }              from 'express';
-import { createSigner, createVerifier }   from 'fast-jwt';
-import { v4 as uuidv4 }                   from 'uuid';
-import redis, { getRedisKeys }            from '../services/redis.service';
-import prisma                             from '../lib/prisma';
-import { getEventEntry }                  from '../services/event-cache.service';
+import { Request, Response }            from 'express';
+import { createVerifier }      from 'fast-jwt';
+import redis, { getRedisKeys } from '../services/redis.service';
+import prisma                           from '../lib/prisma';
+import { getEventEntry }                from '../services/event-cache.service';
 
 const JWT_EXPIRY_SEC = 15 * 60; // 15 minutes — window for end-user to complete purchase
 //
@@ -140,10 +139,10 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
     prisma.queueAttempt.create({
       data: { saleEventId: '', userId, result: 'QUEUED', jti: null },
     }).catch(() => {});
-    const pollUrl        = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
-    const queuePos       = position ?? 0;
+    const pollUrl         = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
+    const queuePos        = position ?? 0;
     const estimatedWaitMs = rateLimit && rateLimit > 0
-      ? Math.round(queuePos * (1000 / rateLimit))
+      ? Math.round((queuePos + 1) * (1000 / rateLimit))
       : undefined;
     res.status(202).json({
       status:         'QUEUED',
@@ -154,44 +153,6 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
     });
     return;
   }
-
-  // ── code === 1: INSTANT WIN ───────────────────────────────────────────────
-  //
-  // Only instant winners need the event cache — queued users never reach here.
-  // Cache miss falls back to Postgres once; subsequent requests hit in-process cache.
-
-  const eventData = await getEventEntry(publicKey);
-
-  if (!eventData) {
-    // Extremely rare: event ended between Lua passing and this line.
-    // Lua already decremented stock — release it back.
-    await redis.hincrby(eventKey, 'stock', 1).catch(() => {});
-    res.status(410).json({ error: 'Event no longer active' });
-    return;
-  }
-
-  const jti = uuidv4();
-
-  const sign = createSigner({
-    key:       async () => eventData.rsaPrivateKey,
-    algorithm: 'RS256',
-    expiresIn: JWT_EXPIRY_SEC * 1000,
-  });
-
-  const token = await sign({
-    jti,
-    sub:  userId,
-    pk:   publicKey,
-    eid:  eventData.eventId,
-    ...(eventData.mode === 'TEST' ? { test: true } : {}),
-  });
-
-  // DO NOT AWAIT — Postgres latency must never block this response.
-  prisma.queueAttempt.create({
-    data: { saleEventId: eventData.eventId, userId, result: 'WON', jti },
-  }).catch(err => console.error('[audit] QueueAttempt write failed:', err));
-
-  res.status(200).json({ status: 'WON', token });
 }
 
 // ── GET /api/queue/status ─────────────────────────────────────────────────────

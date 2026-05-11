@@ -59,7 +59,7 @@ async function bootstrap(): Promise<void> {
   //
   // connectRedis() calls redis.connect() which fires the TCP handshake and
   // resolves once Redis emits the 'ready' event (dataset loaded, commands
-  // accepted).  This guarantees the Lua leakyBucket script is registered
+  // accepted).  This guarantees the Lua scripts are registered
   // before the first /api/queue/join request can arrive.
 
   // @@@@@@@@@ Uncomment before production, Commented to save redis calls @@@@@@@@
