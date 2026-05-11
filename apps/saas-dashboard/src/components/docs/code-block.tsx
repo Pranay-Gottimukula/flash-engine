@@ -11,8 +11,75 @@ interface CodeBlockProps {
   className?: string;
 }
 
-export function CodeBlock({ code, title, className }: CodeBlockProps) {
+// Find the index of a real bash comment `#` (not inside single/double quotes).
+function findInlineComment(line: string): number {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (ch === '#' && !inSingle && !inDouble) return i;
+  }
+  return -1;
+}
+
+function renderBashLine(line: string, idx: number) {
+  const trimmed = line.trimStart();
+
+  // Empty line — preserve vertical rhythm
+  if (!trimmed) {
+    return <span key={idx}>{'\n'}</span>;
+  }
+
+  // Full-line comment
+  if (trimmed.startsWith('#')) {
+    return (
+      <span key={idx} style={{ color: '#6272a4', fontStyle: 'italic' }}>{line}</span>
+    );
+  }
+
+  // Prompt prefix `$ `
+  if (line.startsWith('$ ')) {
+    return (
+      <span key={idx}>
+        <span style={{ color: '#50fa7b' }}>$</span>
+        <span style={{ color: '#f8f8f2' }}>{line.slice(1)}</span>
+      </span>
+    );
+  }
+
+  // Inline comment
+  const ci = findInlineComment(line);
+  if (ci > 0) {
+    return (
+      <span key={idx}>
+        <span style={{ color: '#f8f8f2' }}>{line.slice(0, ci)}</span>
+        <span style={{ color: '#6272a4', fontStyle: 'italic' }}>{line.slice(ci)}</span>
+      </span>
+    );
+  }
+
+  return <span key={idx} style={{ color: '#f8f8f2' }}>{line}</span>;
+}
+
+function BashCode({ code }: { code: string }) {
+  const lines = code.split('\n');
+  return (
+    <>
+      {lines.map((line, idx) => (
+        <span key={idx}>
+          {renderBashLine(line, idx)}
+          {idx < lines.length - 1 ? '\n' : null}
+        </span>
+      ))}
+    </>
+  );
+}
+
+export function CodeBlock({ code, language, title, className }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
+  const isBash = language === 'bash' || language === 'sh' || language === 'shell';
 
   async function handleCopy() {
     await navigator.clipboard.writeText(code);
@@ -26,7 +93,7 @@ export function CodeBlock({ code, title, className }: CodeBlockProps) {
         'relative rounded-lg border border-border-subtle overflow-hidden',
         className,
       )}
-      style={{ backgroundColor: '#0d0d0d' }}
+      style={{ backgroundColor: '#1e1e1e' }}
     >
       {title && (
         <div className="flex items-center border-b border-border-subtle bg-surface-raised px-4 py-2">
@@ -35,8 +102,13 @@ export function CodeBlock({ code, title, className }: CodeBlockProps) {
       )}
 
       <div className="relative">
-        <pre className="overflow-x-auto px-4 py-3 text-xs font-mono leading-relaxed text-accent">
-          <code>{code}</code>
+        <pre
+          className="overflow-x-auto px-4 py-3 text-xs font-mono leading-relaxed [&::-webkit-scrollbar]:hidden"
+          style={{ color: '#f8f8f2', scrollbarWidth: 'none' }}
+        >
+          <code>
+            {isBash ? <BashCode code={code} /> : code}
+          </code>
         </pre>
 
         <button

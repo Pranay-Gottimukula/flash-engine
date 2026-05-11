@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Zap, LayoutGrid, BookOpen, Settings,
-  LogOut, ChevronsLeft, ChevronsRight,
+  LogOut, PanelLeft, PanelLeftClose,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAuth } from '@/lib/auth-context';
@@ -60,6 +60,22 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
         collapsed ? 'md:w-16' : 'md:w-60',
       )}
     >
+      {/* ── Collapse toggle — desktop only, pinned at top ────────────── */}
+      <div
+        className={cn(
+          'hidden md:flex shrink-0 h-11 items-center border-b border-border-subtle px-2',
+          collapsed ? 'justify-center' : 'justify-start',
+        )}
+      >
+        <button
+          onClick={toggle}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-text-tertiary transition-colors duration-150 hover:bg-surface-overlay hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          {collapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
+        </button>
+      </div>
+
       {/* ── Logo ─────────────────────────────────────────────────────── */}
       <div
         className={cn(
@@ -154,14 +170,6 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
           </div>
         )}
 
-        {/* Collapse toggle — desktop only */}
-        <button
-          onClick={toggle}
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className="hidden md:flex h-8 w-full items-center justify-center rounded-lg text-text-tertiary transition-colors duration-150 hover:bg-surface-overlay hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        >
-          {collapsed ? <ChevronsRight size={14} /> : <ChevronsLeft size={14} />}
-        </button>
       </div>
     </aside>
   );

@@ -46,7 +46,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <span className="text-sm font-semibold text-text-primary">FlashEngine</span>
         </div>
 
-        <div className="animate-page-in mx-auto max-w-[1200px] px-4 py-6 md:px-8 md:py-8">
+        <div className="animate-page-in mr-auto max-w-[1200px] px-4 py-6 md:px-8 md:py-8">
           {children}
         </div>
       </main>
