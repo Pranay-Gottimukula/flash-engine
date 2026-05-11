@@ -1,7 +1,7 @@
 {
   "name": "@flashengine/browser",
   "version": "0.1.0",
-  "main": "dist/index.cjs",
+  "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "unpkg": "dist/flash-queue.global.js",
@@ -10,12 +10,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.cjs"
+      "require": "./dist/index.js"
     },
     "./react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.mjs",
-      "require": "./dist/react.cjs"
+      "require": "./dist/react.js"
     }
   },
   "files": [

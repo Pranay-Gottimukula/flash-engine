@@ -96,17 +96,26 @@ export default function CheckoutPage({ config, token, userId, onConfirmed, onRel
     }
     if (result.orderId) {
       onConfirmed(result.orderId, token);
+      return;
+    }
+    if (status !== 200) {
+      setServerError(result.message ?? result.error ?? `Checkout failed (HTTP ${status})`);
     }
   };
 
   const handleFail = async () => {
     setServerError(null);
     setLoading("fail");
-    const { result } = await releasePurchase(config.serverUrl, jti, "PAYMENT_FAILED");
+    const { result, status } = await releasePurchase(config.serverUrl, jti, "PAYMENT_FAILED");
     setLoading(null);
 
     if ((result as { error?: string }).error === "SERVER_OFFLINE") {
       setServerError("Demo server not running. Start it with:\ncd apps/demo/demo-server && npm run dev");
+      return;
+    }
+    if (status !== 200) {
+      const r = result as { message?: string; error?: string };
+      setServerError(r.message ?? r.error ?? `Release failed (HTTP ${status}) — check engine logs`);
       return;
     }
     onReleased(result);
