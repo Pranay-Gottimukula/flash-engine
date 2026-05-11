@@ -90,7 +90,7 @@ export function AdminSidebar({ mobileOpen = false, onMobileClose }: AdminSidebar
       </div>
 
       {/* ── Nav ──────────────────────────────────────────────────────── */}
-      <nav className="flex-1 space-y-0.5 overflow-y-auto py-3">
+      <nav className="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden py-3 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
         {NAV_ITEMS.map(({ label, href, icon: Icon, live }) => {
           const isActive = href === '/admin'
             ? pathname === '/admin'
