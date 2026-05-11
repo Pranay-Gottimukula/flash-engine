@@ -5,13 +5,28 @@ import { useRouter } from 'next/navigation';
 import { Menu } from 'lucide-react';
 import { Sidebar } from './sidebar';
 import { useAuth } from '@/lib/auth-context';
+import { cn } from '@/lib/cn';
 
 export function DashboardShell({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth();
   const router = useRouter();
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileOpen,  setMobileOpen]  = useState(false);
+  const [collapsed,   setCollapsed]   = useState(false);
+
+  // Restore sidebar collapsed pref on mount
+  useEffect(() => {
+    if (localStorage.getItem('sidebar-collapsed') === 'true') setCollapsed(true);
+  }, []);
 
   const closeMobile = useCallback(() => setMobileOpen(false), []);
+
+  const toggleSidebar = useCallback(() => {
+    setCollapsed(prev => {
+      const next = !prev;
+      localStorage.setItem('sidebar-collapsed', String(next));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (isLoading) return;
@@ -22,7 +37,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   if (isLoading || !user || user.role === 'SUPER_ADMIN') return null;
 
   return (
-    <div className="flex">
+    <div>
       {/* Mobile backdrop */}
       {mobileOpen && (
         <div
@@ -31,10 +46,27 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         />
       )}
 
-      <Sidebar mobileOpen={mobileOpen} onMobileClose={closeMobile} />
+      {/* Sidebar — always fixed; main gets matching padding-left */}
+      <Sidebar
+        mobileOpen={mobileOpen}
+        onMobileClose={closeMobile}
+        collapsed={collapsed}
+        onToggle={toggleSidebar}
+      />
 
-      <main className="min-h-screen flex-1 overflow-auto">
-        {/* Mobile top bar — hidden on desktop */}
+      {/*
+        Main: full-width with padding-left = sidebar width.
+        Transitions in sync with the sidebar width transition so the
+        layout shift is smooth. mx-auto inside centers content relative
+        to the available space (viewport − sidebar), not the full viewport.
+      */}
+      <main
+        className={cn(
+          'min-h-screen transition-[padding-left] duration-200 ease-out',
+          collapsed ? 'md:pl-16' : 'md:pl-60',
+        )}
+      >
+        {/* Mobile top bar */}
         <div className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border-subtle bg-surface-base px-4 md:hidden">
           <button
             onClick={() => setMobileOpen(true)}
@@ -46,7 +78,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <span className="text-sm font-semibold text-text-primary">FlashEngine</span>
         </div>
 
-        <div className="animate-page-in mr-auto max-w-[1200px] px-4 py-6 md:px-8 md:py-8">
+        <div className="animate-page-in mx-auto max-w-5xl px-4 py-6 md:px-8 md:py-8">
           {children}
         </div>
       </main>

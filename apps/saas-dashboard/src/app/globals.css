@@ -182,3 +182,9 @@ body {
 .docs-prose tbody tr:last-child td {
   border-bottom: none;
 }
+
+/* ── Syntax highlighter scrollbar ──────────────────────────────────────── */
+/* scrollbarWidth: none handles Firefox; this covers WebKit/Blink. */
+.syn-wrap pre::-webkit-scrollbar {
+  display: none;
+}

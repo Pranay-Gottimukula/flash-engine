@@ -2,16 +2,64 @@
 
 import { useState } from 'react';
 import { Clipboard, Check } from 'lucide-react';
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import tsLang     from 'react-syntax-highlighter/dist/esm/languages/prism/typescript';
+import tsxLang    from 'react-syntax-highlighter/dist/esm/languages/prism/tsx';
+import jsLang     from 'react-syntax-highlighter/dist/esm/languages/prism/javascript';
+import jsonLang   from 'react-syntax-highlighter/dist/esm/languages/prism/json';
+import pythonLang from 'react-syntax-highlighter/dist/esm/languages/prism/python';
+import goLang     from 'react-syntax-highlighter/dist/esm/languages/prism/go';
+import phpLang    from 'react-syntax-highlighter/dist/esm/languages/prism/php';
+import markupLang from 'react-syntax-highlighter/dist/esm/languages/prism/markup';
+import bashLang   from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
 import { cn } from '@/lib/cn';
 
-interface CodeBlockProps {
-  code:      string;
-  language?: string;
-  title?:    string;
-  className?: string;
+SyntaxHighlighter.registerLanguage('typescript', tsLang);
+SyntaxHighlighter.registerLanguage('tsx',        tsxLang);
+SyntaxHighlighter.registerLanguage('javascript', jsLang);
+SyntaxHighlighter.registerLanguage('json',       jsonLang);
+SyntaxHighlighter.registerLanguage('python',     pythonLang);
+SyntaxHighlighter.registerLanguage('go',         goLang);
+SyntaxHighlighter.registerLanguage('php',        phpLang);
+SyntaxHighlighter.registerLanguage('html',       markupLang);
+SyntaxHighlighter.registerLanguage('bash',       bashLang);
+
+// ── Language normalisation ───────────────────────────────────────────────────
+
+const LANG_ALIASES: Record<string, string> = {
+  ts:    'typescript',
+  js:    'javascript',
+  sh:    'bash',
+  shell: 'bash',
+};
+
+const LANG_LABELS: Record<string, string> = {
+  typescript: 'TypeScript',
+  javascript: 'JavaScript',
+  tsx:        'TSX',
+  jsx:        'JSX',
+  bash:       'Bash',
+  json:       'JSON',
+  python:     'Python',
+  go:         'Go',
+  php:        'PHP',
+  html:       'HTML',
+};
+
+function normalizeLang(lang: string): string {
+  return LANG_ALIASES[lang] ?? lang;
 }
 
-// Find the index of a real bash comment `#` (not inside single/double quotes).
+function langLabel(lang: string): string {
+  return LANG_LABELS[lang] ?? lang.toUpperCase();
+}
+
+// ── Bash custom renderer ─────────────────────────────────────────────────────
+// react-syntax-highlighter handles comment tokens, but we also want to colour
+// the `$ ` prompt prefix in the brand accent (#22c55e) which Prism doesn't
+// tokenise separately.  For bash we therefore render line-by-line ourselves.
+
 function findInlineComment(line: string): number {
   let inSingle = false;
   let inDouble = false;
@@ -24,28 +72,22 @@ function findInlineComment(line: string): number {
   return -1;
 }
 
-function renderBashLine(line: string, idx: number) {
+function BashLine({ line }: { line: string }) {
   const trimmed = line.trimStart();
-
-  // Empty line — preserve vertical rhythm
-  if (!trimmed) {
-    return <span key={idx}>{'\n'}</span>;
-  }
+  if (!trimmed) return <>{line}</>;
 
   // Full-line comment
   if (trimmed.startsWith('#')) {
-    return (
-      <span key={idx} style={{ color: '#6272a4', fontStyle: 'italic' }}>{line}</span>
-    );
+    return <span style={{ color: '#6272a4', fontStyle: 'italic' }}>{line}</span>;
   }
 
-  // Prompt prefix `$ `
+  // `$ ` prompt prefix
   if (line.startsWith('$ ')) {
     return (
-      <span key={idx}>
-        <span style={{ color: '#50fa7b' }}>$</span>
+      <>
+        <span style={{ color: '#22c55e' }}>$</span>
         <span style={{ color: '#f8f8f2' }}>{line.slice(1)}</span>
-      </span>
+      </>
     );
   }
 
@@ -53,14 +95,14 @@ function renderBashLine(line: string, idx: number) {
   const ci = findInlineComment(line);
   if (ci > 0) {
     return (
-      <span key={idx}>
+      <>
         <span style={{ color: '#f8f8f2' }}>{line.slice(0, ci)}</span>
         <span style={{ color: '#6272a4', fontStyle: 'italic' }}>{line.slice(ci)}</span>
-      </span>
+      </>
     );
   }
 
-  return <span key={idx} style={{ color: '#f8f8f2' }}>{line}</span>;
+  return <span style={{ color: '#f8f8f2' }}>{line}</span>;
 }
 
 function BashCode({ code }: { code: string }) {
@@ -69,7 +111,7 @@ function BashCode({ code }: { code: string }) {
     <>
       {lines.map((line, idx) => (
         <span key={idx}>
-          {renderBashLine(line, idx)}
+          <BashLine line={line} />
           {idx < lines.length - 1 ? '\n' : null}
         </span>
       ))}
@@ -77,9 +119,32 @@ function BashCode({ code }: { code: string }) {
   );
 }
 
+// ── Component ────────────────────────────────────────────────────────────────
+
+interface CodeBlockProps {
+  code:      string;
+  language?: string;
+  title?:    string;
+  className?: string;
+}
+
+const PRISM_CUSTOM_STYLE: React.CSSProperties = {
+  background:   '#1e1e1e',
+  margin:        0,
+  padding:      '0.75rem 1rem',
+  fontSize:     '0.75rem',
+  lineHeight:   '1.625',
+  fontFamily:   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+  scrollbarWidth: 'none',
+};
+
 export function CodeBlock({ code, language, title, className }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
-  const isBash = language === 'bash' || language === 'sh' || language === 'shell';
+
+  const lang    = language ? normalizeLang(language) : null;
+  const isBash  = lang === 'bash';
+  const label   = lang ? langLabel(lang) : null;
+  const showHdr = !!(title || label);
 
   async function handleCopy() {
     await navigator.clipboard.writeText(code);
@@ -90,44 +155,57 @@ export function CodeBlock({ code, language, title, className }: CodeBlockProps) 
   return (
     <div
       className={cn(
-        'relative rounded-lg border border-border-subtle overflow-hidden',
+        'relative overflow-hidden rounded-lg border border-border-subtle',
         className,
       )}
       style={{ backgroundColor: '#1e1e1e' }}
     >
-      {title && (
-        <div className="flex items-center border-b border-border-subtle bg-surface-raised px-4 py-2">
-          <span className="text-xs text-text-tertiary">{title}</span>
+      {/* Header bar — language badge + optional title */}
+      {showHdr && (
+        <div className="flex items-center justify-between border-b border-border-subtle bg-[#171717] px-4 py-2">
+          <span className="text-xs text-text-tertiary">{title ?? ''}</span>
+          {label && (
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">
+              {label}
+            </span>
+          )}
         </div>
       )}
 
-      <div className="relative">
-        <pre
-          className="overflow-x-auto px-4 py-3 text-xs font-mono leading-relaxed [&::-webkit-scrollbar]:hidden"
-          style={{ color: '#f8f8f2', scrollbarWidth: 'none' }}
-        >
-          <code>
-            {isBash ? <BashCode code={code} /> : code}
-          </code>
-        </pre>
+      {/* Code area */}
+      <div className="relative syn-wrap">
+        {isBash ? (
+          <pre
+            className="overflow-x-auto px-4 py-3 text-xs font-mono leading-relaxed [&::-webkit-scrollbar]:hidden"
+            style={{ color: '#f8f8f2', scrollbarWidth: 'none', background: 'transparent', margin: 0 }}
+          >
+            <code><BashCode code={code} /></code>
+          </pre>
+        ) : (
+          <SyntaxHighlighter
+            language={lang ?? 'text'}
+            style={vscDarkPlus}
+            customStyle={PRISM_CUSTOM_STYLE}
+          >
+            {code}
+          </SyntaxHighlighter>
+        )}
 
+        {/* Copy button */}
         <button
           onClick={handleCopy}
           aria-label={copied ? 'Copied' : 'Copy code'}
           className={cn(
             'absolute right-3 top-3 flex items-center gap-1.5 rounded-md px-2 py-1',
             'text-xs transition-colors duration-150',
-            'border border-border-subtle bg-surface-raised',
+            'border border-border-subtle bg-[#171717]',
             copied
               ? 'text-accent'
-              : 'text-text-tertiary hover:text-text-secondary hover:border-border',
+              : 'text-text-tertiary hover:border-border hover:text-text-secondary',
           )}
         >
           {copied ? (
-            <>
-              <Check size={12} />
-              <span>Copied!</span>
-            </>
+            <><Check size={12} /><span>Copied!</span></>
           ) : (
             <Clipboard size={12} />
           )}

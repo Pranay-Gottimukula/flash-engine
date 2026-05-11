@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -19,31 +19,18 @@ const NAV_ITEMS = [
 interface SidebarProps {
   mobileOpen?:    boolean;
   onMobileClose?: () => void;
+  collapsed:      boolean;
+  onToggle:       () => void;
 }
 
-export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
+export function Sidebar({ mobileOpen = false, onMobileClose, collapsed, onToggle }: SidebarProps) {
   const pathname         = usePathname();
   const { user, logout } = useAuth();
-  const [collapsed, setCollapsed] = useState(false);
 
-  // Restore collapsed pref on mount
-  useEffect(() => {
-    if (localStorage.getItem('sidebar-collapsed') === 'true') setCollapsed(true);
-  }, []);
-
-  // Close mobile drawer on route change — use a ref so the effect only
-  // re-runs when pathname changes, not when onMobileClose identity changes.
+  // Close mobile drawer on route change
   const onMobileCloseRef = useRef(onMobileClose);
   useEffect(() => { onMobileCloseRef.current = onMobileClose; });
   useEffect(() => { onMobileCloseRef.current?.(); }, [pathname]);
-
-  const toggle = useCallback(() => {
-    setCollapsed(prev => {
-      const next = !prev;
-      localStorage.setItem('sidebar-collapsed', String(next));
-      return next;
-    });
-  }, []);
 
   const initial = user?.email?.[0]?.toUpperCase() ?? '?';
 
@@ -51,12 +38,12 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
     <aside
       className={cn(
         'flex flex-col border-r border-border-subtle bg-surface',
-        // Mobile: fixed drawer, translate off-screen when closed
-        'fixed inset-y-0 left-0 z-40 w-72',
+        // Always fixed (overlays content; main gets padding-left to compensate)
+        'fixed inset-y-0 left-0 z-40',
         'transition-[transform,width] duration-200 ease-out',
+        // Mobile: slide in/out; Desktop: always visible
         mobileOpen ? 'translate-x-0' : '-translate-x-full',
-        // Desktop: sticky sidebar, width driven by collapsed state
-        'md:sticky md:top-0 md:z-auto md:h-screen md:shrink-0 md:translate-x-0',
+        'w-72 md:translate-x-0',
         collapsed ? 'md:w-16' : 'md:w-60',
       )}
     >
@@ -68,7 +55,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
         )}
       >
         <button
-          onClick={toggle}
+          onClick={onToggle}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           className="flex h-8 w-8 items-center justify-center rounded-lg text-text-tertiary transition-colors duration-150 hover:bg-surface-overlay hover:text-text-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
@@ -95,7 +82,6 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
       {/* ── Nav ──────────────────────────────────────────────────────── */}
       <nav className="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden py-3 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
         {NAV_ITEMS.map(({ label, href, icon: Icon }) => {
-          // Events tab stays active for all sub-routes (/dashboard/events/*)
           const isActive = href === '/dashboard'
             ? pathname === '/dashboard' || pathname.startsWith('/dashboard/events')
             : pathname === href || pathname.startsWith(href + '/');
@@ -121,7 +107,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
                 <span className={cn(collapsed && 'md:hidden')}>{label}</span>
               </Link>
 
-              {/* Desktop-only tooltip when collapsed */}
+              {/* Tooltip when collapsed */}
               {collapsed && (
                 <span className={cn(
                   'pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2',
@@ -141,7 +127,6 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
 
       {/* ── Bottom ───────────────────────────────────────────────────── */}
       <div className="shrink-0 space-y-1 border-t border-border-subtle p-2">
-        {/* Full user row — always on mobile, desktop only when expanded */}
         <div className={cn(
           'flex items-center gap-2 rounded-lg px-2 py-1.5',
           collapsed && 'md:hidden',
@@ -161,7 +146,7 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
           </button>
         </div>
 
-        {/* Icon-only avatar — desktop, collapsed only */}
+        {/* Icon-only avatar — collapsed desktop */}
         {collapsed && (
           <div className="hidden md:flex justify-center py-1">
             <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent-muted text-xs font-semibold text-accent">
@@ -169,7 +154,6 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
             </div>
           </div>
         )}
-
       </div>
     </aside>
   );
