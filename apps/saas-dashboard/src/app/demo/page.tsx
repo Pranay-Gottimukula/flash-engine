@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect, memo } from 'react';
-import { AlertTriangle, ChevronDown, Zap } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ExternalLink, Zap } from 'lucide-react';
 import { Card }   from '@/components/ui/card';
 import { Input }  from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+
+const DEMO_CLIENT_URL =
+  process.env.NEXT_PUBLIC_DEMO_CLIENT_URL ?? 'http://localhost:3001';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -164,6 +167,15 @@ export default function DemoPage() {
   const [pollIntervalMs, setPollIntervalMs] = useState(2000);
 
   const [freeTierOpen, setFreeTierOpen] = useState(false);
+
+  // Pre-fill from URL params (?pk=, ?engine=)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pk = params.get('pk');
+    const engine = params.get('engine');
+    if (pk) setPublicKey(pk);
+    if (engine) setApiUrl(engine);
+  }, []);
 
   // Display state — driven entirely by the 200ms tick
   const [running,    setRunning]    = useState(false);
@@ -528,6 +540,41 @@ export default function DemoPage() {
             {tooltip.text}
           </div>
         )}
+
+        {/* ── Mode tabs ────────────────────────────────────────────────────── */}
+        <div className="flex items-center gap-1 rounded-lg border border-border-subtle bg-surface-raised p-1">
+          {/* Traffic Simulator — active, non-navigating */}
+          <div
+            className="flex flex-1 items-center justify-center gap-2 rounded-md bg-surface-overlay px-4 py-2 text-sm font-medium text-text-primary"
+            aria-current="page"
+          >
+            <Zap size={14} className="text-accent" />
+            Traffic Simulator
+          </div>
+
+          {/* Storefront Demo — links out */}
+          <a
+            href={
+              publicKey.trim()
+                ? `${DEMO_CLIENT_URL}?pk=${encodeURIComponent(publicKey)}&engine=${encodeURIComponent(apiUrl)}`
+                : DEMO_CLIENT_URL
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium text-text-tertiary transition-colors hover:bg-surface-overlay hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
+          >
+            <ExternalLink size={14} />
+            Storefront Demo
+          </a>
+        </div>
+
+        {/* ── Info banner ──────────────────────────────────────────────────── */}
+        <div className="rounded-lg border border-border-subtle bg-surface-raised px-4 py-3 text-xs text-text-tertiary">
+          <span className="font-medium text-text-secondary">Traffic Simulator</span>
+          {' '}tests queue throughput with many virtual users.{' '}
+          <span className="font-medium text-text-secondary">Storefront Demo</span>
+          {' '}tests the full purchase flow (verify + release) as a single user.
+        </div>
 
         {/* CORS notice */}
         <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-xs text-yellow-400">

@@ -210,7 +210,7 @@ export async function releaseTicket(req: Request, res: Response): Promise<void>{
   if (queueLen > 0) {
     console.log(`[release] Stock released, ${queueLen} users still in queue — drain loop will process.`);
 
-    if (!getActiveDrains().includes(publicKey)) {
+    if (!getActiveDrains().events.includes(publicKey)) {
       const rawRateLimit = await redis.hget(redisKey, 'rateLimit');
       const rateLimit    = parseInt(rawRateLimit ?? '50', 10);
       startDrain(publicKey, rateLimit);

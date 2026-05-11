@@ -18,6 +18,7 @@ import { EventStats } from '@/components/events/event-stats';
 import { EventTimelineCard } from '@/components/events/event-timeline';
 import { EventKeysCard } from '@/components/events/event-keys';
 import { EventFunnelCard } from '@/components/events/event-funnel';
+import { LiveDemoCard } from '@/components/events/live-demo-card';
 import type { EventDetail, StatsResponse } from '@/components/events/types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -297,6 +298,7 @@ export default function AdminEventDetailPage() {
           <EventTimelineCard timeline={event.timeline!} status={event.status} />
         )}
         <EventKeysCard event={event} />
+        <LiveDemoCard event={event} simulatorPath="/demo" />
         {stats?.funnel && <EventFunnelCard funnel={stats.funnel} />}
       </div>
 
