@@ -7,6 +7,7 @@ import { toErrorMessage } from '@/lib/utils';
 import { useToast } from '@/components/ui/toast';
 import { Card } from '@/components/ui/card';
 import { CopyableField } from '@/components/ui/copyable-field';
+import { CodeBlock } from '@/components/docs/code-block';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import type { EventDetail } from './types';
@@ -43,13 +44,17 @@ export function EventKeysCard({ event }: EventKeysProps) {
   return (
     <>
       <Card header={<p className="text-sm font-semibold text-text-primary">Integration Keys</p>}>
-        <div className="space-y-5">
-          <CopyableField label="Public Key"     value={event.publicKey} />
-          <CopyableField label="RSA Public Key" value={event.rsaPublicKey} multiline />
+        <div className="space-y-4">
+          <CopyableField label="Public Key"     value={event.publicKey}    codeStyle />
+          <CopyableField label="RSA Public Key" value={event.rsaPublicKey} codeStyle multiline />
 
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-text-secondary">Signing Secret</p>
+          <CopyableField
+            label="Signing Secret"
+            value={signingSecret}
+            masked
+            codeStyle
+            warning="Store this securely. Used for release route HMAC."
+            headerAction={
               <button
                 type="button"
                 onClick={() => { setRotateError(''); setShowRotateModal(true); }}
@@ -58,18 +63,13 @@ export function EventKeysCard({ event }: EventKeysProps) {
                 <RotateCcw size={11} />
                 Rotate
               </button>
-            </div>
-            <CopyableField
-              value={signingSecret}
-              masked
-              warning="Store this securely. Used for release route HMAC."
-            />
-          </div>
+            }
+          />
 
-          <CopyableField
-            label="Integration Snippet"
-            value={event.integrationSnippet.trim()}
-            multiline
+          <CodeBlock
+            code={event.integrationSnippet.trim()}
+            language="bash"
+            title="Install & configure"
           />
         </div>
       </Card>
