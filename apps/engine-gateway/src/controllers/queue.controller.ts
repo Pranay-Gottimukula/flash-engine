@@ -34,7 +34,7 @@ import { Request, Response }            from 'express';
 import { createVerifier }      from 'fast-jwt';
 import redis, { getRedisKeys } from '../services/redis.service';
 import prisma                           from '../lib/prisma';
-import { getEventEntry }                from '../services/event-cache.service';
+import { getEventEntry, evictEventCache } from '../services/event-cache.service';
 
 const JWT_EXPIRY_SEC = 20 * 60; // 20 minutes — window for end-user to complete purchase
 //
@@ -148,7 +148,12 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
       if (!ev) return;
       prisma.queueAttempt.create({
         data: { saleEventId: ev.eventId, userId, result: 'SOLD_OUT', jti: null },
-      }).catch(() => {});
+      }).catch((err: any) => {
+        if (err?.code === 'P2003') {
+          console.error(`[queue/join] Stale cache for ${publicKey} — evicting`);
+          evictEventCache(publicKey);
+        }
+      });
     }).catch(() => {});
     res.status(200).json({ status: 'SOLD_OUT' });
     return;
@@ -159,7 +164,12 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
       if (!ev) return;
       prisma.queueAttempt.create({
         data: { saleEventId: ev.eventId, userId, result: 'QUEUED', jti: null },
-      }).catch(() => {});
+      }).catch((err: any) => {
+        if (err?.code === 'P2003') {
+          console.error(`[queue/join] Stale cache for ${publicKey} — evicting`);
+          evictEventCache(publicKey);
+        }
+      });
     }).catch(() => {});
     const pollUrl         = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
     const queuePos        = position ?? 0;
