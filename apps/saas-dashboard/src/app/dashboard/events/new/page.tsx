@@ -34,6 +34,13 @@ export default function CreateEventPage() {
     e.preventDefault();
     if (!user) return;
 
+    const trimmedWebhook = webhookUrl.trim();
+    const isDev = process.env.NODE_ENV === 'development';
+    if (trimmedWebhook && !(isDev ? /^https?:\/\/.+/ : /^https:\/\/.+/).test(trimmedWebhook)) {
+      setError(isDev ? 'Webhook URL must start with http:// or https://' : 'Webhook URL must start with https://');
+      return;
+    }
+
     setError('');
     setLoading(true);
 
@@ -46,7 +53,7 @@ export default function CreateEventPage() {
         oversubscriptionMultiplier: Number(multiplier),
         mode:                       testMode ? 'TEST' : 'LIVE',
       };
-      if (webhookUrl.trim()) body.webhookUrl = webhookUrl.trim();
+      if (trimmedWebhook) body.webhookUrl = trimmedWebhook;
 
       const event = await api.post<CreateEventResponse>('/api/admin/events', body);
       toast.success('Event created');
@@ -122,14 +129,15 @@ export default function CreateEventPage() {
 
             <div className="flex flex-col gap-1.5">
               <Input
-                label="Webhook URL"
+                label="Webhook URL (optional)"
                 type="url"
-                placeholder="https://yourstore.com/webhook"
+                placeholder="https://yoursite.com/webhooks/flashengine"
                 value={webhookUrl}
                 onChange={e => setWebhookUrl(e.target.value)}
               />
               <p className="text-xs text-text-tertiary">
-                Get notified when event status changes. Optional.
+                We'll POST event notifications here (ticket_issued, activated, ended, etc.).{' '}
+                HTTPS required in production. HTTP allowed in development.
               </p>
             </div>
 

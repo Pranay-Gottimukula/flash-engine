@@ -434,7 +434,7 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
   // Fire-and-forget: a failed decrement only delays the next drain tick by one
   // second (conservative); it never causes incorrect SOLD_OUT or data loss.
 
-  redis.decr(getRedisKeys(publicKey).outstandingKey).catch(err =>
+  redis.decrFloor0(getRedisKeys(publicKey).outstandingKey).catch(err =>
     console.error('[verify] outstanding decr failed:', err),
   );
 
@@ -442,6 +442,7 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
     verified: true,
     userId:   verified.sub,
     eventId,
+    jti:      verified.jti,
     ...(verified.test ? { test: true } : {}),
   });
 }

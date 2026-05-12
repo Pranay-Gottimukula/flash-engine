@@ -3,7 +3,7 @@
 import { Router }          from 'express';
 import { joinQueue, verifyToken, getQueueStatus, getQueueInfo } from '../controllers/queue.controller';
 import { releaseTicket }                 from '../controllers/release.controller';
-import { requireEventOwnership }         from '../middleware/event-ownership.middleware';
+import { requireEventOwnership, requireEventOwnershipForRelease } from '../middleware/event-ownership.middleware';
 import { queueJoinLimiter, queueStatusLimiter, queueInfoLimiter } from '../middleware/rate-limit.middleware';
 
 const router = Router();
@@ -16,6 +16,6 @@ router.get('/info',     queueInfoLimiter, getQueueInfo);
 router.post('/verify',  verifyToken);
 // requireEventOwnership runs first: validates x-public-key maps to an ACTIVE
 // event and attaches eventData to res.locals so releaseTicket doesn't re-fetch.
-router.post('/release', requireEventOwnership, releaseTicket);
+router.post('/release', requireEventOwnershipForRelease, releaseTicket);
 
 export default router;

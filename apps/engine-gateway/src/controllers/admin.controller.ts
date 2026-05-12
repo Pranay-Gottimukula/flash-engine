@@ -139,6 +139,16 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
     return;
   }
 
+  if (webhookUrl !== undefined && webhookUrl !== null) {
+    try {
+      const parsed = new URL(webhookUrl);
+      if (parsed.protocol !== 'https:') throw new Error();
+    } catch {
+      res.status(400).json({ error: '`webhookUrl` must be a valid https:// URL' });
+      return;
+    }
+  }
+
   const queueCap = Math.ceil(stockCount * oversubscriptionMultiplier);
 
  // ── Step 3: Generate keys ───────────────────────────────────────────────────
@@ -816,6 +826,53 @@ export async function endEvent(req: Request<{ id: string }>, res: Response): Pro
     id:      event.id,
     status:  'ENDED',
   });
+}
+
+// ── PUT /api/admin/events/:id ─────────────────────────────────────────────────
+//
+// Partial update for event settings. Currently supports: webhookUrl.
+// If the event is ACTIVE the in-process cache is patched immediately so the
+// drain loop picks up the new URL on the next tick without a restart.
+
+export async function updateEvent(req: Request<{ id: string }>, res: Response): Promise<void> {
+  const { id } = req.params;
+  const { webhookUrl } = req.body as { webhookUrl?: string | null };
+
+  if (webhookUrl !== undefined && webhookUrl !== null && webhookUrl !== '') {
+    try {
+      const parsed = new URL(webhookUrl);
+      if (parsed.protocol !== 'https:') throw new Error();
+    } catch {
+      res.status(400).json({ error: '`webhookUrl` must be a valid https:// URL' });
+      return;
+    }
+  }
+
+  const event = await prisma.saleEvent.findUnique({ where: { id } });
+  if (!event) {
+    res.status(404).json({ error: 'Event not found' });
+    return;
+  }
+
+  const authClient = res.locals.client!;
+  if (authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
+    res.status(403).json({ error: 'Not your event' });
+    return;
+  }
+
+  const newWebhookUrl = (webhookUrl === '' || webhookUrl === undefined) ? null : (webhookUrl ?? null);
+
+  await prisma.saleEvent.update({
+    where: { id },
+    data:  { webhookUrl: newWebhookUrl },
+  });
+
+  const cached = await getEventEntry(event.publicKey);
+  if (cached) {
+    warmEventCache(event.publicKey, { ...cached, webhookUrl: newWebhookUrl });
+  }
+
+  res.status(200).json({ webhookUrl: newWebhookUrl });
 }
 
 // ── GET /api/admin/overview ───────────────────────────────────────────────────

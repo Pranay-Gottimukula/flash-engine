@@ -1,7 +1,7 @@
 // apps/engine-gateway/src/middleware/event-ownership.middleware.ts
 
 import { Request, Response, NextFunction } from 'express';
-import { getEventEntry }                   from '../services/event-cache.service';
+import { getEventEntry, getEventEntryForRelease } from '../services/event-cache.service';
 
 // ── Extend Express Locals so res.locals.eventData is typed everywhere ─────────
 //
@@ -100,5 +100,34 @@ export async function requireEventOwnership(
   // declared above.
   res.locals.eventData = eventData;
 
+  next();
+}
+
+// ── requireEventOwnershipForRelease ──────────────────────────────────────────
+//
+// Variant used on the release route.  Identical logic but delegates to
+// getEventEntryForRelease so it succeeds even when the event is ENDED or
+// PAUSED — a user mid-checkout should always be able to release their slot.
+
+export async function requireEventOwnershipForRelease(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const publicKey = req.headers['x-public-key'];
+
+  if (typeof publicKey !== 'string') {
+    res.status(400).json({ error: 'Missing x-public-key header' });
+    return;
+  }
+
+  const eventData = await getEventEntryForRelease(publicKey);
+
+  if (!eventData) {
+    res.status(404).json({ error: 'Event not found or not active' });
+    return;
+  }
+
+  res.locals.eventData = eventData;
   next();
 }

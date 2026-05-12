@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import { FlashEngine, FlashEngineError } from "@flashengine/server";
-import type { CheckoutBody, FailBody } from "./types";
+import type { CheckoutBody, FailBody, WebhookBody } from "./types";
 
 dotenv.config();
 
@@ -15,12 +15,26 @@ const EVENT_PUBLIC_KEY     = process.env.EVENT_PUBLIC_KEY     ?? "";
 const EVENT_SIGNING_SECRET = process.env.EVENT_SIGNING_SECRET ?? "";
 const PORT                 = process.env.PORT                 ?? "4001";
 
-// ── SDK instance ───────────────────────────────────────────────────────────────
+// ── SDK instance (used for release — signingSecret is event-specific) ─────────
 const engine = new FlashEngine({
   publicKey:     EVENT_PUBLIC_KEY,
   signingSecret: EVENT_SIGNING_SECRET,
   apiUrl:        ENGINE_API_URL,
 });
+
+// Extract the pk claim from a JWT without verifying its signature.
+// Used so verify calls always send the correct x-public-key header even when
+// the demo client was opened with a different event's public key via URL param.
+function extractPublicKeyFromToken(token: string): string | null {
+  try {
+    const payloadB64 = token.split('.')[1];
+    if (!payloadB64) return null;
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    return typeof payload.pk === 'string' ? payload.pk : null;
+  } catch {
+    return null;
+  }
+}
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
 const C = {
@@ -31,6 +45,14 @@ const C = {
   cyan:   (s: string) => `\x1b[36m${s}\x1b[0m`,
   dim:    (s: string) => `\x1b[2m${s}\x1b[0m`,
 };
+
+// ── Pending winners (populated by webhook, consumed by /checkout) ─────────────
+//
+// Keyed by jti. The /checkout route can check this map to confirm the winner
+// was pre-validated via webhook before calling verifyToken.
+// Webhook URL to configure on the event: http://localhost:4001/webhook
+
+export const pendingWinners = new Map<string, { jti: string; userId: string }>();
 
 // ── Log store ─────────────────────────────────────────────────────────────────
 
@@ -78,6 +100,28 @@ class RequestLog {
   }
 }
 
+// ── POST /webhook ─────────────────────────────────────────────────────────────
+//
+// Receives Flash Engine lifecycle events. Always returns 200 so the engine
+// does not retry unnecessarily.
+app.post("/webhook", (req: Request, res: Response) => {
+  try {
+    const { event, eventId, userId, jti, timestamp } = req.body as WebhookBody;
+
+    const ts = new Date().toLocaleTimeString("en-US", { hour12: false });
+    console.log(`\n${C.dim(`[${ts}]`)} ${C.cyan("WEBHOOK")} event=${C.yellow(event ?? "(unknown)")} eventId=${eventId} timestamp=${timestamp}`);
+
+    if (event === "ticket_issued" && jti) {
+      pendingWinners.set(jti, { jti, userId: userId ?? "" });
+      console.log(`  ${C.dim("→")} ${C.green(`ticket_issued: stored jti=${jti} userId=${userId ?? "(none)"}`)}`);
+    }
+  } catch (err) {
+    console.error("[webhook] Failed to process body:", err);
+  }
+
+  res.status(200).json({ received: true });
+});
+
 // ── POST /api/checkout ────────────────────────────────────────────────────────
 app.post("/api/checkout", async (req: Request, res: Response) => {
   const { token, userId } = req.body as CheckoutBody;
@@ -87,9 +131,20 @@ app.post("/api/checkout", async (req: Request, res: Response) => {
   log.step(`userId: ${userId}`);
   log.step(`Verifying token with engine…`);
 
+  // Use the token's pk claim so verify works regardless of which event the
+  // demo client was opened with (e.g. via the SaaS dashboard URL param).
+  const tokenPk = extractPublicKeyFromToken(token) ?? EVENT_PUBLIC_KEY;
+  const verifyEngine = tokenPk === EVENT_PUBLIC_KEY
+    ? engine
+    : new FlashEngine({ publicKey: tokenPk, signingSecret: EVENT_SIGNING_SECRET, apiUrl: ENGINE_API_URL });
+
+  console.log(
+    C.dim(`  [debug] SDK publicKey="${tokenPk.slice(0, 14)}…"  token="${token.slice(0, 50)}…"`)
+  );
+
   let jti: string;
   try {
-    const result = await engine.verifyToken(token);
+    const result = await verifyEngine.verifyToken(token);
     jti = result.jti;
     log.step(`Engine responded: 200 { valid: true, jti: ${jti} }`, C.green);
   } catch (err) {

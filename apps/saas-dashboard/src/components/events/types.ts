@@ -20,6 +20,7 @@ export interface EventDetail {
   publicKey:                  string;
   rsaPublicKey:               string;
   signingSecret:              string;
+  webhookUrl:                 string | null;
   createdAt:                  string;
   integrationSnippet:         string;
   timeline?:                  EventTimeline;
