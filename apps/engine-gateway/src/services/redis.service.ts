@@ -214,6 +214,34 @@ redis.defineCommand('bulkSoldOut', {
   lua: BULK_SOLD_OUT_LUA,
 });
 
+// ── Lua Script: Decrement with floor at zero ──────────────────────────────────
+//
+// Standard DECR can go negative if called more times than the counter was
+// incremented (e.g. double-release, verify after a non-outstanding token).
+// This script decrements atomically and clamps to 0 so the outstanding counter
+// never becomes negative, which would permanently suppress the drain gate.
+//
+// KEYS[1] = the counter key (e.g. flash:outstanding:{pk})
+// Returns the value after decrement (>= 0).
+
+declare module 'ioredis' {
+  interface Redis {
+    decrFloor0(key: string): Promise<number>;
+  }
+}
+
+redis.defineCommand('decrFloor0', {
+  numberOfKeys: 1,
+  lua: `
+    local v = redis.call('DECR', KEYS[1])
+    if v < 0 then
+      redis.call('SET', KEYS[1], '0')
+      return 0
+    end
+    return v
+  `,
+});
+
 // ── Key helpers ───────────────────────────────────────────────────────────────
 
 export function getRedisKeys(publicKey: string) {

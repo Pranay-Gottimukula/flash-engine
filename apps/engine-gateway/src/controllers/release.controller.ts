@@ -2,7 +2,7 @@
 
 import { Request, Response } from 'express';
 import crypto                from 'crypto';
-import redis                 from '../services/redis.service';
+import redis, { getRedisKeys } from '../services/redis.service';
 import prisma                from '../lib/prisma';
 import { getActiveDrains, startDrain } from '../services/drain.service';
 import { fireWebhook }                 from '../services/webhook.service';
@@ -212,7 +212,18 @@ export async function releaseTicket(req: Request, res: Response): Promise<void>{
     return;
   }
 
-  // ── Step 6b: Notify / restart drain if queue has waiting users ───────────────
+  // ── Step 6b: Decrement outstanding counter ───────────────────────────────────
+  //
+  // A released ticket is no longer outstanding — the winner abandoned checkout.
+  // Decrement so the drain gate re-opens for the next queued user if maxConcurrent
+  // is set.  Floor at 0 prevents the counter going negative if release is called
+  // for a jti that was never counted (e.g., issued before maxConcurrent was set).
+
+  redis.decrFloor0(getRedisKeys(publicKey).outstandingKey).catch(err =>
+    console.error('[release] outstanding decr failed:', err),
+  );
+
+  // ── Step 6c: Notify / restart drain if queue has waiting users ───────────────
   //
   // The drain loop processes the queue on its next 1-second tick automatically —
   // no explicit poke is needed. We only need to restart it if it somehow stopped

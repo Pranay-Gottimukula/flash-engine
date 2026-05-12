@@ -171,7 +171,7 @@ export default function CheckoutPage({ config, token, userId, onConfirmed, onRel
               Reservation Expired
             </div>
             <div style={{ color: "#888", fontSize: 14, marginBottom: 20 }}>
-              Your 15-minute window has passed. Click below to rejoin the queue.
+              Your 20-minute window has passed. Click below to rejoin the queue.
             </div>
             <button
               onClick={onExpired}
