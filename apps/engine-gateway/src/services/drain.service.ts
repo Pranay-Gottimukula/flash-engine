@@ -4,8 +4,8 @@ import redis, { getRedisKeys } from './redis.service';
 import prisma from '../lib/prisma';
 import { getEventEntry } from './event-cache.service';
 
-const TICKET_TTL_SEC = 900;  // 15 minutes — matches JWT expiry
-const JWT_EXPIRY_SEC = 900;
+const TICKET_TTL_SEC = 1200;  // 20 minutes — buffer for long queue waits
+const JWT_EXPIRY_SEC = 1200;
 
 // ── Drain registry ────────────────────────────────────────────────────────────
 //

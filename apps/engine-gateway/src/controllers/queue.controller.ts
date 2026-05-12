@@ -36,12 +36,13 @@ import redis, { getRedisKeys } from '../services/redis.service';
 import prisma                           from '../lib/prisma';
 import { getEventEntry }                from '../services/event-cache.service';
 
-const JWT_EXPIRY_SEC = 15 * 60; // 15 minutes — window for end-user to complete purchase
+const JWT_EXPIRY_SEC = 20 * 60; // 20 minutes — window for end-user to complete purchase
 //
-// WHY 15 MINUTES?
-//   Short enough to limit abuse (replay window is bounded).
-//   Long enough for a checkout flow with payment processing.
-//   If stock is exhausted before 15 min, the verify endpoint rejects anyway.
+// WHY 20 MINUTES?
+//   Users at the back of a long queue may wait several minutes before their
+//   token is drained and they poll to receive it. 20 minutes ensures they
+//   still have a meaningful checkout window after that wait.
+//   If stock is exhausted before expiry, the verify endpoint rejects anyway.
 
 // ── POST /api/queue/join ──────────────────────────────────────────────────────
 //
@@ -109,10 +110,25 @@ export async function joinQueue(req: Request, res: Response): Promise<void> {
   if (code === -5) {
     // User is already in the system — check their current status rather than
     // returning a generic ALREADY_JOINED so they get an actionable response.
-    const current = await resolveUserStatus(publicKey, userId);
+    // Fetch rateLimit in parallel with the status lookup — it's needed to
+    // compute estimatedWaitMs and costs nothing to prefetch for the other branches.
+    const [current, rawRate] = await Promise.all([
+      resolveUserStatus(publicKey, userId),
+      redis.hget(eventKey, 'rateLimit'),
+    ]);
+
     if (current.status === 'QUEUED') {
-      const pollUrl = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
-      res.status(200).json({ status: 'ALREADY_JOINED', position: current.position, pollUrl });
+      const pollUrl  = `/api/queue/status?pk=${publicKey}&userId=${userId}`;
+      const rate     = parseInt(rawRate ?? '0', 10);
+      const estimatedWaitMs = rate > 0
+        ? Math.round((current.position + 1) * (1000 / rate))
+        : undefined;
+      res.status(200).json({
+        status:   'ALREADY_JOINED',
+        position: current.position,
+        pollUrl,
+        ...(estimatedWaitMs !== undefined ? { estimatedWaitMs } : {}),
+      });
     } else if (current.status === 'WON') {
       'tokenExpired' in current
         ? res.status(200).json({ status: 'WON', tokenExpired: true })
