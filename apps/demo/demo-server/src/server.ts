@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import { FlashEngine, FlashEngineError } from "@flashengine/server";
-import type { CheckoutBody, FailBody } from "./types";
+import type { CheckoutBody, FailBody, WebhookBody } from "./types";
 
 dotenv.config();
 
@@ -31,6 +31,14 @@ const C = {
   cyan:   (s: string) => `\x1b[36m${s}\x1b[0m`,
   dim:    (s: string) => `\x1b[2m${s}\x1b[0m`,
 };
+
+// ── Pending winners (populated by webhook, consumed by /checkout) ─────────────
+//
+// Keyed by jti. The /checkout route can check this map to confirm the winner
+// was pre-validated via webhook before calling verifyToken.
+// Webhook URL to configure on the event: http://localhost:4001/webhook
+
+export const pendingWinners = new Map<string, { jti: string; userId: string }>();
 
 // ── Log store ─────────────────────────────────────────────────────────────────
 
@@ -78,6 +86,28 @@ class RequestLog {
   }
 }
 
+// ── POST /webhook ─────────────────────────────────────────────────────────────
+//
+// Receives Flash Engine lifecycle events. Always returns 200 so the engine
+// does not retry unnecessarily.
+app.post("/webhook", (req: Request, res: Response) => {
+  try {
+    const { event, eventId, userId, jti, timestamp } = req.body as WebhookBody;
+
+    const ts = new Date().toLocaleTimeString("en-US", { hour12: false });
+    console.log(`\n${C.dim(`[${ts}]`)} ${C.cyan("WEBHOOK")} event=${C.yellow(event ?? "(unknown)")} eventId=${eventId} timestamp=${timestamp}`);
+
+    if (event === "ticket_issued" && jti) {
+      pendingWinners.set(jti, { jti, userId: userId ?? "" });
+      console.log(`  ${C.dim("→")} ${C.green(`ticket_issued: stored jti=${jti} userId=${userId ?? "(none)"}`)}`);
+    }
+  } catch (err) {
+    console.error("[webhook] Failed to process body:", err);
+  }
+
+  res.status(200).json({ received: true });
+});
+
 // ── POST /api/checkout ────────────────────────────────────────────────────────
 app.post("/api/checkout", async (req: Request, res: Response) => {
   const { token, userId } = req.body as CheckoutBody;
@@ -86,6 +116,9 @@ app.post("/api/checkout", async (req: Request, res: Response) => {
 
   log.step(`userId: ${userId}`);
   log.step(`Verifying token with engine…`);
+  console.log(
+    C.dim(`  [debug] SDK publicKey="${EVENT_PUBLIC_KEY.slice(0, 14)}…"  token="${token.slice(0, 50)}…"`)
+  );
 
   let jti: string;
   try {

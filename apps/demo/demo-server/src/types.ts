@@ -3,6 +3,15 @@ export interface CheckoutBody {
   userId: string;
 }
 
+export interface WebhookBody {
+  event:     string;
+  eventId:   string;
+  publicKey?: string;
+  userId?:   string;
+  jti?:      string;
+  timestamp: string;
+}
+
 export interface FailBody {
   jti: string;
   reason: "PAYMENT_FAILED" | "CANCELLED";
