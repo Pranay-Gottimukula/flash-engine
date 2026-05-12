@@ -179,6 +179,41 @@ redis.defineCommand('drainProcess', {
   lua: DRAIN_PROCESS_LUA,
 });
 
+// ── Lua Script: Bulk Sold-Out ─────────────────────────────────────────────────
+//
+// Marks remaining queued users SOLD_OUT, re-checking stock before each write.
+// If a concurrent release restores stock mid-bulk, the script stops and re-adds
+// the remaining users to the sorted-set queue so the next drain tick can award
+// them stock normally.
+//
+// KEYS[1] = flash:event:{publicKey}
+// KEYS[2] = flash:result:{publicKey}
+// KEYS[3] = flash:queue:{publicKey}
+// ARGV    = interleaved userId/score pairs for users already ZPOPMIN'd but
+//           not yet written to the result hash.
+// Returns the number of users actually marked SOLD_OUT.
+
+const BULK_SOLD_OUT_LUA = readFileSync(
+  join(__dirname, '../scripts/bulk-sold-out.lua'),
+  'utf-8'
+);
+
+declare module 'ioredis' {
+  interface Redis {
+    bulkSoldOut(
+      eventKey:  string,
+      resultKey: string,
+      queueKey:  string,
+      ...argv:   string[]
+    ): Promise<number>;
+  }
+}
+
+redis.defineCommand('bulkSoldOut', {
+  numberOfKeys: 3,
+  lua: BULK_SOLD_OUT_LUA,
+});
+
 // ── Key helpers ───────────────────────────────────────────────────────────────
 
 export function getRedisKeys(publicKey: string) {

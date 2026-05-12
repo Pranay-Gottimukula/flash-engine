@@ -76,9 +76,12 @@ async function drainBatch(publicKey: string, batchSize: number): Promise<void> {
   const popped = await redis.zpopmin(queueKey, batchSize);
 
   // ioredis returns a flat array: [member, score, member, score, ...]
-  const users: string[] = [];
+  // Preserve scores so we can re-add users to the queue if stock is restored.
+  const users:  string[] = [];
+  const scores: string[] = [];
   for (let i = 0; i < popped.length; i += 2) {
     users.push(popped[i]);
+    scores.push(popped[i + 1]);
   }
 
   let soldOutIndex = -1;
@@ -92,17 +95,22 @@ async function drainBatch(publicKey: string, batchSize: number): Promise<void> {
       // Stock claimed — generate JWT and park it for the polling endpoint.
       await processWinner(publicKey, eventKey, resultKey, userId);
     } else {
-      // Stock exhausted — this user and everyone behind them are SOLD_OUT.
+      // Stock exhausted — this user was already marked SOLD_OUT by drainProcess.
       soldOutIndex = i;
       break;
     }
   }
 
   if (soldOutIndex !== -1) {
-    // Remaining users in this batch were already ZPOPMIN'd from the queue
-    // but haven't been processed yet — mark them all SOLD_OUT.
-    const unprocessedBatch = users.slice(soldOutIndex + 1);
-    await drainRemainingAsSoldOut(queueKey, resultKey, unprocessedBatch);
+    // Build interleaved userId/score pairs for users we popped but didn't
+    // process yet — the Lua script will also drain whatever remains in the
+    // queue, re-checking stock before each write so a concurrent release
+    // can rescue users instead of incorrectly marking them SOLD_OUT.
+    const argv: string[] = [];
+    for (let i = soldOutIndex + 1; i < users.length; i++) {
+      argv.push(users[i], scores[i]);
+    }
+    await redis.bulkSoldOut(eventKey, resultKey, queueKey, ...argv);
   }
 }
 
@@ -160,41 +168,6 @@ async function processWinner(
   }).catch(err => console.error('[drain/audit] QueueAttempt WON failed:', err));
 }
 
-// ── Sold-out flush ────────────────────────────────────────────────────────────
-//
-// Called once stock hits zero. Atomically drains every remaining queue member,
-// writes SOLD_OUT to the result hash for each, and fires audit logs.
-// `alreadyPopped` are members that were ZPOPMIN'd in the current batch but
-// not yet processed — they never touched the result hash, so we handle them here.
-
-async function drainRemainingAsSoldOut(
-  queueKey:      string,
-  resultKey:     string,
-  alreadyPopped: string[],
-): Promise<void> {
-  // Pull everyone still waiting, then nuke the queue in one round-trip.
-  const [remaining] = await Promise.all([
-    redis.zrange(queueKey, 0, -1),
-    redis.del(queueKey),
-  ]);
-
-  const all = [...alreadyPopped, ...remaining];
-  if (all.length === 0) return;
-
-  // Pipeline: mark every user SOLD_OUT in one TCP round-trip.
-  const pipeline = redis.pipeline();
-  for (const userId of all) {
-    pipeline.hset(resultKey, userId, 'SOLD_OUT');
-  }
-  await pipeline.exec();
-
-  // Fire-and-forget audit for each user.
-  for (const userId of all) {
-    prisma.queueAttempt.create({
-      data: { saleEventId: '', userId, result: 'SOLD_OUT', jti: null },
-    }).catch(() => {});
-  }
-}
 
 // ── Integration TODOs ─────────────────────────────────────────────────────────
 //

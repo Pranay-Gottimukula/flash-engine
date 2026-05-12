@@ -172,7 +172,7 @@ export async function releaseTicket(req: Request, res: Response): Promise<void>{
     return;
   }
 
-  // ── Step 6: Increment Redis stock + log release atomically ──────────────────
+  // ── Step 6: Increment Redis stock + decrement admitted atomically ───────────
   //
   // We can't wrap a Redis call and a Postgres write in a true transaction,
   // so we do Redis first, then Postgres.
@@ -186,14 +186,27 @@ export async function releaseTicket(req: Request, res: Response): Promise<void>{
   //   row exists. This is worse — inventory is permanently lost for this unit.
   //   Redis first avoids this worse failure mode.
   //
-  // HINCRBY is atomic — no race with concurrent join requests decrementing.
+  // WHY decrement admitted?
+  //   The queueCap gate blocks new users when admitted >= queueCap. Without
+  //   decrementing admitted when a ticket is released, the gate never re-opens
+  //   even though inventory was restored, starving all queued users.
+  //
+  // MULTI/EXEC ensures both increments land together — no partial state
+  // where stock is back but admitted is still inflated (or vice-versa).
 
   const redisKey = `flash:event:${publicKey}`;
 
   try {
-    await redis.hincrby(redisKey, 'stock', 1);
+    const results = await redis.multi()
+      .hincrby(redisKey, 'stock',    1)
+      .hincrby(redisKey, 'admitted', -1)
+      .exec();
+
+    if (!results) {
+      throw new Error('MULTI/EXEC aborted (watched key changed)');
+    }
   } catch (err) {
-    console.error('[release] Redis stock increment failed:', err);
+    console.error('[release] Redis stock+admitted update failed:', err);
     res.status(503).json({ error: 'Failed to release stock — Redis unavailable' });
     return;
   }
