@@ -14,6 +14,7 @@ import {
   getClientOverview,
   rotateSigningSecret,
   duplicateEvent,
+  updateCapacity,
 } from '../controllers/admin.controller';
 import { requireAdminAuth } from '../middleware/admin-auth.middleware';
 
@@ -33,5 +34,6 @@ router.get   ('/events/:id',                getEvent);
 router.get   ('/events/:id/stats',          getEventStats);
 router.get   ('/events/:id/timeline',       getEventTimeline);
 router.put   ('/events/:id/rotate-secret',  rotateSigningSecret);
+router.put   ('/events/:id/capacity',       updateCapacity);
 
 export default router;

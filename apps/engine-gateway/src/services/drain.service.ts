@@ -66,10 +66,28 @@ export async function initDrains(): Promise<void> {
 // ── Core drain tick ───────────────────────────────────────────────────────────
 
 async function drainBatch(publicKey: string, batchSize: number): Promise<void> {
-  const { eventKey, queueKey, resultKey } = getRedisKeys(publicKey);
+  const { eventKey, queueKey, resultKey, outstandingKey } = getRedisKeys(publicKey);
 
-  const queueSize = await redis.zcard(queueKey);
+  // Single round-trip: queue depth + concurrency gate fields.
+  const pipeResult = await redis.pipeline()
+    .zcard(queueKey)
+    .hget(eventKey, 'maxConcurrent')
+    .get(outstandingKey)
+    .exec() ?? [];
+
+  const queueSize      = (pipeResult[0]?.[1] as number)     ?? 0;
+  const rawMax         = (pipeResult[1]?.[1] as string|null) ?? null;
+  const rawOutstanding = (pipeResult[2]?.[1] as string|null) ?? null;
+
   if (queueSize === 0) return;
+
+  // If a concurrency cap is set, skip this tick when too many winners are
+  // waiting on the client's checkout backend.  Resumes automatically next tick.
+  if (rawMax !== null) {
+    const maxConcurrent  = parseInt(rawMax, 10);
+    const outstanding    = parseInt(rawOutstanding ?? '0', 10);
+    if (outstanding >= maxConcurrent) return;
+  }
 
   // Pop up to batchSize users in arrival order — atomic, no other drain can
   // claim the same users (single-server, single interval per event).
@@ -120,11 +138,12 @@ async function drainBatch(publicKey: string, batchSize: number): Promise<void> {
 // Here we sign the JWT and park the token so the polling endpoint can return it.
 
 async function processWinner(
-  publicKey: string,
-  eventKey:  string,
-  resultKey: string,
-  userId:    string,
+  publicKey:      string,
+  eventKey:       string,
+  resultKey:      string,
+  userId:         string,
 ): Promise<void> {
+  const { outstandingKey } = getRedisKeys(publicKey);
   const eventData = await getEventEntry(publicKey);
 
   if (!eventData) {
@@ -158,9 +177,14 @@ async function processWinner(
     return;
   }
 
-  // Park signed JWT — polling endpoint reads this key.
-  // TTL matches the token's own expiry so the key self-cleans.
-  await redis.set(`flash:ticket:${publicKey}:${userId}`, token, 'EX', TICKET_TTL_SEC);
+  // Park signed JWT and increment the outstanding counter in one round-trip.
+  // The outstanding counter drives the maxConcurrent gate in drainBatch —
+  // it must be incremented before the ticket is visible to the polling
+  // endpoint so the gate never observes a transient under-count.
+  await Promise.all([
+    redis.set(`flash:ticket:${publicKey}:${userId}`, token, 'EX', TICKET_TTL_SEC),
+    redis.incr(outstandingKey),
+  ]);
 
   // DO NOT AWAIT — Postgres write must never block the drain loop.
   prisma.queueAttempt.create({

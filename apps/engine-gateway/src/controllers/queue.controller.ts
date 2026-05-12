@@ -427,7 +427,16 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
   }
 
 
-  // ── Step 6: Respond ──────────────────────────────────────────────────────────
+  // ── Step 6: Decrement outstanding counter + respond ─────────────────────────
+  //
+  // A verified token means one checkout slot has been consumed — decrement so
+  // the drain loop can issue the next winner if maxConcurrent is set.
+  // Fire-and-forget: a failed decrement only delays the next drain tick by one
+  // second (conservative); it never causes incorrect SOLD_OUT or data loss.
+
+  redis.decr(getRedisKeys(publicKey).outstandingKey).catch(err =>
+    console.error('[verify] outstanding decr failed:', err),
+  );
 
   res.status(200).json({
     verified: true,

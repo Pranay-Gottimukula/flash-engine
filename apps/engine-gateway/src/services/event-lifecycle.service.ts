@@ -9,12 +9,13 @@ export async function endEventCore(event: { id: string; publicKey: string }): Pr
     data:  { status: 'ENDED', endedAt: new Date() },
   });
 
-  const { eventKey, queueKey, resultKey } = getRedisKeys(event.publicKey);
+  const { eventKey, queueKey, resultKey, outstandingKey } = getRedisKeys(event.publicKey);
   const pipeline = redis.pipeline();
   pipeline.hset(eventKey, 'status', 'ENDED');
   pipeline.expire(eventKey, 48 * 60 * 60);
   pipeline.del(queueKey);
   pipeline.del(resultKey);
+  pipeline.del(outstandingKey);
   await pipeline.exec();
 
   stopDrain(event.publicKey);

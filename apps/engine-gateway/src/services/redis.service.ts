@@ -218,9 +218,10 @@ redis.defineCommand('bulkSoldOut', {
 
 export function getRedisKeys(publicKey: string) {
   return {
-    eventKey:  `flash:event:${publicKey}`,
-    queueKey:  `flash:queue:${publicKey}`,
-    resultKey: `flash:result:${publicKey}`,
+    eventKey:       `flash:event:${publicKey}`,
+    queueKey:       `flash:queue:${publicKey}`,
+    resultKey:      `flash:result:${publicKey}`,
+    outstandingKey: `flash:outstanding:${publicKey}`,
   };
 }
 

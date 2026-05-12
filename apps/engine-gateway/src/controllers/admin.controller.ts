@@ -198,11 +198,12 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
       });
 
       await seedRedis({
-        publicKey:  eventPublicKey,
-        eventId:    created.id,
+        publicKey:     eventPublicKey,
+        eventId:       created.id,
         stockCount,
         rateLimit,
         queueCap,
+        maxConcurrent: null,
       });
 
       return created;
@@ -260,13 +261,14 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
 //
 
 async function seedRedis(params: {
-  publicKey:  string;
-  eventId:    string;
-  stockCount: number;
-  rateLimit:  number;
-  queueCap:   number;
+  publicKey:     string;
+  eventId:       string;
+  stockCount:    number;
+  rateLimit:     number;
+  queueCap:      number;
+  maxConcurrent: number | null;
 }): Promise<void> {
-  const { publicKey, eventId, stockCount, rateLimit, queueCap } = params;
+  const { publicKey, eventId, stockCount, rateLimit, queueCap, maxConcurrent } = params;
   const { eventKey: key } = getRedisKeys(publicKey);
 
   // Check if already seeded — prevents overwrite on duplicate calls
@@ -275,10 +277,6 @@ async function seedRedis(params: {
     throw new Error(`Redis key ${key} already exists — possible duplicate event creation`);
   }
 
-  // Pipeline batches all HSET calls into one TCP round-trip
-  // NOTE: secretKey is NOT stored in Redis anymore — we use RSA.
-  // The private key stays in Postgres only and is loaded into the
-  // Node process cache on activation via warmEventCache().
   const pipeline = redis.pipeline();
   pipeline.hset(key, 'status',    'PENDING');
   pipeline.hset(key, 'stock',     String(stockCount));
@@ -286,7 +284,10 @@ async function seedRedis(params: {
   pipeline.hset(key, 'eventId',   eventId);
   pipeline.hset(key, 'admitted',  '0');
   pipeline.hset(key, 'queueCap',  String(queueCap));
-  pipeline.expire(key, 48 * 60 * 60);                         // 48hr TTL safety net
+  if (maxConcurrent !== null) {
+    pipeline.hset(key, 'maxConcurrent', String(maxConcurrent));
+  }
+  pipeline.expire(key, 48 * 60 * 60);
   await pipeline.exec();
 }
 
@@ -1024,11 +1025,12 @@ export async function duplicateEvent(req: Request<{ id: string }>, res: Response
       });
 
       await seedRedis({
-        publicKey:  eventPublicKey,
-        eventId:    created.id,
-        stockCount: source.stockCount,
-        rateLimit:  source.rateLimit,
+        publicKey:     eventPublicKey,
+        eventId:       created.id,
+        stockCount:    source.stockCount,
+        rateLimit:     source.rateLimit,
         queueCap,
+        maxConcurrent: source.maxConcurrent,
       });
 
       return created;
@@ -1049,4 +1051,57 @@ export async function duplicateEvent(req: Request<{ id: string }>, res: Response
     rsaPublicKey,
     jwksUrl:       `${process.env.ENGINE_URL}/api/.well-known/jwks/${eventPublicKey}`,
   });
+}
+
+// ── PUT /api/admin/events/:id/capacity ────────────────────────────────────────
+//
+// Updates the maxConcurrent concurrency cap for an event — the maximum number
+// of winners whose tokens have been issued but not yet verified (i.e., users
+// who are in the client's checkout flow simultaneously).
+//
+// Setting maxConcurrent to null removes the cap (drain runs unconstrained).
+// Takes effect immediately: the drain loop reads from Redis every tick, so the
+// next tick after this call will respect the new limit.
+//
+// Available to CLIENT (own events only) and SUPER_ADMIN.
+
+export async function updateCapacity(req: Request<{ id: string }>, res: Response): Promise<void> {
+  const { id } = req.params;
+  const { maxConcurrent } = req.body as { maxConcurrent?: number | null };
+
+  if (maxConcurrent !== undefined && maxConcurrent !== null) {
+    if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1) {
+      res.status(400).json({ error: '`maxConcurrent` must be a positive integer or null' });
+      return;
+    }
+  }
+
+  const event = await prisma.saleEvent.findUnique({ where: { id } });
+  if (!event) {
+    res.status(404).json({ error: 'Event not found' });
+    return;
+  }
+
+  const authClient = res.locals.client!;
+  if (authClient.role !== 'SUPER_ADMIN' && event.clientId !== authClient.id) {
+    res.status(403).json({ error: 'Not your event' });
+    return;
+  }
+
+  const newMax = maxConcurrent ?? null;
+
+  await prisma.saleEvent.update({
+    where: { id },
+    data:  { maxConcurrent: newMax },
+  });
+
+  // Mirror to Redis so the drain loop picks it up on the next tick without restart.
+  const { eventKey } = getRedisKeys(event.publicKey);
+  if (newMax !== null) {
+    await redis.hset(eventKey, 'maxConcurrent', String(newMax));
+  } else {
+    await redis.hdel(eventKey, 'maxConcurrent');
+  }
+
+  res.status(200).json({ maxConcurrent: newMax });
 }
