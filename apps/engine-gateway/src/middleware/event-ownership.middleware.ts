@@ -24,6 +24,8 @@ declare global {
         signingSecret: string;
         eventId:       string;
         name:          string;
+        mode:          string;
+        webhookUrl:    string | null;
       };
     }
   }

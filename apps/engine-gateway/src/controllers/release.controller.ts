@@ -5,6 +5,7 @@ import crypto                from 'crypto';
 import redis                 from '../services/redis.service';
 import prisma                from '../lib/prisma';
 import { getActiveDrains, startDrain } from '../services/drain.service';
+import { fireWebhook }                 from '../services/webhook.service';
 // getEventEntry is NOT called here — requireEventOwnership middleware runs
 // before this handler and attaches the validated event to res.locals.eventData.
 
@@ -265,8 +266,19 @@ export async function releaseTicket(req: Request, res: Response): Promise<void>{
     return;
   }
 
-  // ── Step 8: Audit — fire-and-forget QueueAttempt for the released ticket ────
-  //
+  // ── Step 8: Notify client backend + audit ────────────────────────────────────
+
+  if (eventData.webhookUrl) {
+    fireWebhook(eventData.webhookUrl, {
+      event:     'stock_released',
+      eventId:   eventData.eventId,
+      publicKey,
+      jti,
+      reason,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   // Completes the audit trail: WON → RELEASED. The attempt.userId is available
   // from the QueueAttempt lookup in Step 5.
 

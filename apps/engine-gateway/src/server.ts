@@ -14,6 +14,7 @@ import authRoutes                    from './routes/auth.routes';
 import healthRouter                  from './routes/health.routes';
 import jwksRouter                    from './routes/jwks.routes';
 import { initDrains, stopDrain, getActiveDrains } from './services/drain.service';
+import { startWebhookRetryWorker }                from './services/webhook.service';
 
 const app  = express();
 const PORT = process.env.PORT ?? 4000;
@@ -117,6 +118,12 @@ async function bootstrap(): Promise<void> {
   } catch (err) {
     console.error('[bootstrap] initDrains failed — events can be re-activated manually:', err);
   }
+
+  // ── Step 5: Start webhook retry worker ────────────────────────────────────
+  //
+  // Reads flash:webhook:retry every 5 seconds and redelivers any entries whose
+  // nextRetryAt has passed. Entries are dropped after 3 failed attempts.
+  startWebhookRetryWorker();
 
   // ── Step 5: Graceful shutdown ─────────────────────────────────────────────
   //

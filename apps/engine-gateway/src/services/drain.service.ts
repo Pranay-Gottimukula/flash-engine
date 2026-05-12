@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import redis, { getRedisKeys } from './redis.service';
 import prisma from '../lib/prisma';
 import { getEventEntry } from './event-cache.service';
+import { fireWebhook }   from './webhook.service';
 
 const TICKET_TTL_SEC = 1200;  // 20 minutes — buffer for long queue waits
 const JWT_EXPIRY_SEC = 1200;
@@ -185,6 +186,19 @@ async function processWinner(
     redis.set(`flash:ticket:${publicKey}:${userId}`, token, 'EX', TICKET_TTL_SEC),
     redis.incr(outstandingKey),
   ]);
+
+  // Notify the client backend so it can pre-warm a cart or reserve inventory
+  // the moment the user wins — before the browser polls and gets the token.
+  if (eventData.webhookUrl) {
+    fireWebhook(eventData.webhookUrl, {
+      event:     'ticket_issued',
+      eventId:   eventData.eventId,
+      publicKey,
+      userId,
+      jti,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   // DO NOT AWAIT — Postgres write must never block the drain loop.
   prisma.queueAttempt.create({

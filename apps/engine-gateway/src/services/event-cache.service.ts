@@ -5,12 +5,13 @@ import prisma from '../lib/prisma';
 // rsaPrivateKey replaces secretKey
 // signingSecret added for release route HMAC
 interface EventEntry {
-  rsaPrivateKey:  string;   // PEM — signs JWTs
-  rsaPublicKey:   string;   // PEM — verifies JWTs
-  signingSecret:  string;   // HMAC secret for release route
+  rsaPrivateKey:  string;         // PEM — signs JWTs
+  rsaPublicKey:   string;         // PEM — verifies JWTs
+  signingSecret:  string;         // HMAC secret for release route
   eventId:        string;
   name:           string;
-  mode:           string;   // LIVE | TEST
+  mode:           string;         // LIVE | TEST
+  webhookUrl:     string | null;  // client webhook for drain notifications
 }
 
 // Module-level Map — lives in Node process RAM, not Redis
@@ -34,6 +35,7 @@ export async function getEventEntry(publicKey: string): Promise<EventEntry | nul
       name:          true,
       status:        true,
       mode:          true,
+      webhookUrl:    true,
     },
   });
 
@@ -46,6 +48,7 @@ export async function getEventEntry(publicKey: string): Promise<EventEntry | nul
     eventId:        event.id,
     name:           event.name,
     mode:           event.mode,
+    webhookUrl:     event.webhookUrl,
   };
 
   cache.set(publicKey, entry);

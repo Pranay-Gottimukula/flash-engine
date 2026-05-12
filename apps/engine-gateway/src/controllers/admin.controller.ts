@@ -12,7 +12,8 @@ import prisma from '../lib/prisma';
 import redis, { getRedisKeys } from '../services/redis.service';
 import { warmEventCache, getEventEntry } from '../services/event-cache.service';
 import { startDrain, stopDrain }           from '../services/drain.service';
-import { endEventCore } from '../services/event-lifecycle.service';
+import { endEventCore }                    from '../services/event-lifecycle.service';
+import { fireWebhook }                     from '../services/webhook.service';
 
 // ── Test Mode Reset Timers ────────────────────────────────────────────────────
 //
@@ -501,6 +502,7 @@ export async function activateEvent(req: Request<{ id: string }>, res: Response)
     eventId:        event.id,
     name:           event.name,
     mode:           event.mode,
+    webhookUrl:     event.webhookUrl,
   });
 
   if (event.mode === 'TEST') {
@@ -508,6 +510,14 @@ export async function activateEvent(req: Request<{ id: string }>, res: Response)
   }
 
   startDrain(event.publicKey, event.rateLimit);
+
+  if (event.webhookUrl) {
+    fireWebhook(event.webhookUrl, {
+      event:     'activated',
+      eventId:   event.id,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   res.status(200).json({
     message: 'Event is now ACTIVE. Queue is open.',
@@ -679,11 +689,11 @@ export async function pauseEvent(req: Request<{ id: string }>, res: Response): P
   stopDrain(event.publicKey);
 
   if (event.webhookUrl) {
-    fetch(event.webhookUrl, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ event: 'paused', eventId: event.id, timestamp: new Date().toISOString() }),
-    }).catch(err => console.error('[pauseEvent] Webhook delivery failed:', err));
+    fireWebhook(event.webhookUrl, {
+      event:     'paused',
+      eventId:   event.id,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   res.status(200).json({ message: 'Event paused', event: updatedEvent });
@@ -749,6 +759,7 @@ export async function resumeEvent(req: Request<{ id: string }>, res: Response): 
     eventId:       event.id,
     name:          event.name,
     mode:          event.mode,
+    webhookUrl:    event.webhookUrl,
   });
 
   if (event.mode === 'TEST') {
@@ -758,11 +769,11 @@ export async function resumeEvent(req: Request<{ id: string }>, res: Response): 
   startDrain(event.publicKey, event.rateLimit);
 
   if (event.webhookUrl) {
-    fetch(event.webhookUrl, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ event: 'resumed', eventId: event.id, timestamp: new Date().toISOString() }),
-    }).catch(err => console.error('[resumeEvent] Webhook delivery failed:', err));
+    fireWebhook(event.webhookUrl, {
+      event:     'resumed',
+      eventId:   event.id,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   res.status(200).json({ message: 'Event resumed', event: updatedEvent });
@@ -791,6 +802,14 @@ export async function endEvent(req: Request<{ id: string }>, res: Response): Pro
 
   clearTestResetTimer(event.publicKey);
   await endEventCore(event);
+
+  if (event.webhookUrl) {
+    fireWebhook(event.webhookUrl, {
+      event:     'ended',
+      eventId:   event.id,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   res.status(200).json({
     message: 'Event ended. Queue is closed.',
