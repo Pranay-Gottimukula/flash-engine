@@ -442,6 +442,7 @@ export async function verifyToken(req: Request, res: Response): Promise<void> {
     verified: true,
     userId:   verified.sub,
     eventId,
+    jti:      verified.jti,
     ...(verified.test ? { test: true } : {}),
   });
 }

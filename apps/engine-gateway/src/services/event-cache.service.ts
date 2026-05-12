@@ -67,6 +67,44 @@ export function warmEventCache(publicKey: string, entry: EventEntry){
     console.log(`[event-cache] Warmed cache for event: ${entry.name} (${publicKey})`);
 }
 
+// ── Release-path lookup (no status filter) ───────────────────────────────────
+//
+// The release route must work even after an event ends or is paused — a user
+// might be mid-checkout when the event transitions.  Unlike getEventEntry we
+// don't cache non-ACTIVE results to avoid polluting the active-events cache.
+
+export async function getEventEntryForRelease(publicKey: string): Promise<EventEntry | null> {
+  // Cache hit means event is ACTIVE — good to go.
+  if (cache.has(publicKey)) return cache.get(publicKey)!;
+
+  const event = await prisma.saleEvent.findUnique({
+    where:  { publicKey },
+    select: {
+      id:            true,
+      rsaPrivateKey: true,
+      rsaPublicKey:  true,
+      signingSecret: true,
+      name:          true,
+      status:        true,
+      mode:          true,
+      webhookUrl:    true,
+    },
+  });
+
+  // PENDING events have never issued tokens — nothing to release.
+  if (!event || event.status === 'PENDING') return null;
+
+  return {
+    rsaPrivateKey:  event.rsaPrivateKey,
+    rsaPublicKey:   event.rsaPublicKey,
+    signingSecret:  event.signingSecret,
+    eventId:        event.id,
+    name:           event.name,
+    mode:           event.mode,
+    webhookUrl:     event.webhookUrl,
+  };
+}
+
 // ── Evict ─────────────────────────────────────────────────────────────────────
 //
 // Called from endEvent() so stale secretKeys don't sit in memory

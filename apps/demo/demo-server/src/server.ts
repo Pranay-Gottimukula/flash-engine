@@ -15,12 +15,26 @@ const EVENT_PUBLIC_KEY     = process.env.EVENT_PUBLIC_KEY     ?? "";
 const EVENT_SIGNING_SECRET = process.env.EVENT_SIGNING_SECRET ?? "";
 const PORT                 = process.env.PORT                 ?? "4001";
 
-// ── SDK instance ───────────────────────────────────────────────────────────────
+// ── SDK instance (used for release — signingSecret is event-specific) ─────────
 const engine = new FlashEngine({
   publicKey:     EVENT_PUBLIC_KEY,
   signingSecret: EVENT_SIGNING_SECRET,
   apiUrl:        ENGINE_API_URL,
 });
+
+// Extract the pk claim from a JWT without verifying its signature.
+// Used so verify calls always send the correct x-public-key header even when
+// the demo client was opened with a different event's public key via URL param.
+function extractPublicKeyFromToken(token: string): string | null {
+  try {
+    const payloadB64 = token.split('.')[1];
+    if (!payloadB64) return null;
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    return typeof payload.pk === 'string' ? payload.pk : null;
+  } catch {
+    return null;
+  }
+}
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
 const C = {
@@ -116,13 +130,21 @@ app.post("/api/checkout", async (req: Request, res: Response) => {
 
   log.step(`userId: ${userId}`);
   log.step(`Verifying token with engine…`);
+
+  // Use the token's pk claim so verify works regardless of which event the
+  // demo client was opened with (e.g. via the SaaS dashboard URL param).
+  const tokenPk = extractPublicKeyFromToken(token) ?? EVENT_PUBLIC_KEY;
+  const verifyEngine = tokenPk === EVENT_PUBLIC_KEY
+    ? engine
+    : new FlashEngine({ publicKey: tokenPk, signingSecret: EVENT_SIGNING_SECRET, apiUrl: ENGINE_API_URL });
+
   console.log(
-    C.dim(`  [debug] SDK publicKey="${EVENT_PUBLIC_KEY.slice(0, 14)}…"  token="${token.slice(0, 50)}…"`)
+    C.dim(`  [debug] SDK publicKey="${tokenPk.slice(0, 14)}…"  token="${token.slice(0, 50)}…"`)
   );
 
   let jti: string;
   try {
-    const result = await engine.verifyToken(token);
+    const result = await verifyEngine.verifyToken(token);
     jti = result.jti;
     log.step(`Engine responded: 200 { valid: true, jti: ${jti} }`, C.green);
   } catch (err) {
