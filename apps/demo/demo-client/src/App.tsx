@@ -16,6 +16,7 @@ import OrderConfirmed from "./components/OrderConfirmed";
 import SoldOut from "./components/SoldOut";
 import Released from "./components/Released";
 import DebugConsole from "./components/DebugConsole";
+import SettingsModal from "./components/SettingsModal";
 
 function getInitialConfig(): Config {
   const params = new URLSearchParams(window.location.search);
@@ -48,6 +49,7 @@ export default function App() {
   const [queueWaitMs, setQueueWaitMs] = useState(0);
   const [expiredMessage, setExpiredMessage] = useState<string | null>(null);
   const [multiTabWarning, setMultiTabWarning] = useState(false);
+  const [showSettings, setShowSettings]       = useState(false);
   const channelRef = useRef<BroadcastChannel | null>(null);
 
   // Update URL when pk is known
@@ -195,23 +197,45 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Reset Demo button (always visible) ───────────────────────────── */}
+      {/* ── Fixed top-right action buttons ─────────────────────────────────── */}
       {state !== "config" && (
-        <button
-          onClick={handleResetDemo}
-          title="Clear localStorage and reload"
-          style={{
-            position: "fixed", top: multiTabWarning ? 52 : 12, right: 16, zIndex: 1500,
-            background: "#1c1c1c", border: "1px solid #2a2a2a",
-            borderRadius: 6, padding: "6px 12px",
-            fontFamily: "var(--mono)", fontSize: 11, color: "#555",
-            cursor: "pointer", transition: "all 0.2s",
-          }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#ff1744"; (e.currentTarget as HTMLButtonElement).style.borderColor = "#ff174444"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#555"; (e.currentTarget as HTMLButtonElement).style.borderColor = "#2a2a2a"; }}
-        >
-          ↺ Reset Demo
-        </button>
+        <div style={{
+          position: "fixed", top: multiTabWarning ? 52 : 12, right: 16,
+          zIndex: 1500, display: "flex", gap: 8,
+        }}>
+          {/* Settings / SDK keys button */}
+          <button
+            id="open-settings-btn"
+            onClick={() => setShowSettings(true)}
+            title="Update SDK keys"
+            style={{
+              background: "#1c1c1c", border: "1px solid #2a2a2a",
+              borderRadius: 6, padding: "6px 12px",
+              fontFamily: "var(--mono)", fontSize: 11, color: "#555",
+              cursor: "pointer", transition: "all 0.2s", display: "flex", alignItems: "center", gap: 5,
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#00e676"; (e.currentTarget as HTMLButtonElement).style.borderColor = "#00e67644"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#555"; (e.currentTarget as HTMLButtonElement).style.borderColor = "#2a2a2a"; }}
+          >
+            ⚙ Keys
+          </button>
+
+          {/* Reset Demo button */}
+          <button
+            onClick={handleResetDemo}
+            title="Clear localStorage and reload"
+            style={{
+              background: "#1c1c1c", border: "1px solid #2a2a2a",
+              borderRadius: 6, padding: "6px 12px",
+              fontFamily: "var(--mono)", fontSize: 11, color: "#555",
+              cursor: "pointer", transition: "all 0.2s",
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#ff1744"; (e.currentTarget as HTMLButtonElement).style.borderColor = "#ff174444"; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#555"; (e.currentTarget as HTMLButtonElement).style.borderColor = "#2a2a2a"; }}
+          >
+            ↺ Reset Demo
+          </button>
+        </div>
       )}
 
       {/* ── Page states ───────────────────────────────────────────────────── */}
@@ -260,6 +284,14 @@ export default function App() {
       )}
 
       <DebugConsole />
+
+      {/* ── Settings modal ──────────────────────────────────────────────────── */}
+      {showSettings && (
+        <SettingsModal
+          serverUrl={config.serverUrl}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </>
   );
 }

@@ -10,17 +10,21 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const ENGINE_API_URL       = process.env.ENGINE_API_URL       ?? "http://localhost:4000";
-const EVENT_PUBLIC_KEY     = process.env.EVENT_PUBLIC_KEY     ?? "";
-const EVENT_SIGNING_SECRET = process.env.EVENT_SIGNING_SECRET ?? "";
-const PORT                 = process.env.PORT                 ?? "4001";
+const ENGINE_API_URL = process.env.ENGINE_API_URL ?? "http://localhost:4000";
+const PORT           = process.env.PORT           ?? "4001";
 
-// ── SDK instance (used for release — signingSecret is event-specific) ─────────
-const engine = new FlashEngine({
-  publicKey:     EVENT_PUBLIC_KEY,
-  signingSecret: EVENT_SIGNING_SECRET,
-  apiUrl:        ENGINE_API_URL,
-});
+// ── Dynamic SDK keys (updated at runtime via POST /api/settings) ──────────────
+let activePublicKey     = process.env.EVENT_PUBLIC_KEY     ?? "";
+let activeSigningSecret = process.env.EVENT_SIGNING_SECRET ?? "";
+
+// ── SDK factory — always uses the current in-memory keys ──────────────────────
+function getEngineClient(publicKeyOverride?: string): FlashEngine {
+  return new FlashEngine({
+    publicKey:     publicKeyOverride ?? activePublicKey,
+    signingSecret: activeSigningSecret,
+    apiUrl:        ENGINE_API_URL,
+  });
+}
 
 // Extract the pk claim from a JWT without verifying its signature.
 // Used so verify calls always send the correct x-public-key header even when
@@ -133,10 +137,8 @@ app.post("/api/checkout", async (req: Request, res: Response) => {
 
   // Use the token's pk claim so verify works regardless of which event the
   // demo client was opened with (e.g. via the SaaS dashboard URL param).
-  const tokenPk = extractPublicKeyFromToken(token) ?? EVENT_PUBLIC_KEY;
-  const verifyEngine = tokenPk === EVENT_PUBLIC_KEY
-    ? engine
-    : new FlashEngine({ publicKey: tokenPk, signingSecret: EVENT_SIGNING_SECRET, apiUrl: ENGINE_API_URL });
+  const tokenPk = extractPublicKeyFromToken(token) ?? activePublicKey;
+  const verifyEngine = getEngineClient(tokenPk);
 
   console.log(
     C.dim(`  [debug] SDK publicKey="${tokenPk.slice(0, 14)}…"  token="${token.slice(0, 50)}…"`)
@@ -197,7 +199,7 @@ app.post("/api/checkout/fail", async (req: Request, res: Response) => {
   log.step("Calling engine /api/queue/release via SDK…", C.yellow);
 
   try {
-    const result = await engine.releaseTicket(jti, reason);
+    const result = await getEngineClient().releaseTicket(jti, reason);
     log.step(`Engine responded: 200 ${JSON.stringify(result)}`, C.green);
     log.done("Stock released back to pool", true);
     res.status(200).json(result);
@@ -216,7 +218,35 @@ app.post("/api/checkout/fail", async (req: Request, res: Response) => {
 
 // ── GET /api/health ───────────────────────────────────────────────────────────
 app.get("/api/health", (_req: Request, res: Response) => {
-  res.json({ status: "ok", engineUrl: ENGINE_API_URL, eventConfigured: !!EVENT_PUBLIC_KEY });
+  res.json({
+    status:         "ok",
+    engineUrl:      ENGINE_API_URL,
+    eventConfigured: !!activePublicKey,
+    activePublicKey: activePublicKey || null,
+  });
+});
+
+// ── POST /api/settings ────────────────────────────────────────────────────────
+//
+// Dynamically update the SDK keys without restarting the server.
+// Body: { publicKey: string; signingSecret: string }
+app.post("/api/settings", (req: Request, res: Response) => {
+  const { publicKey, signingSecret } = req.body as { publicKey?: string; signingSecret?: string };
+
+  if (!publicKey || !signingSecret) {
+    res.status(400).json({ error: "MISSING_FIELDS", message: "Both publicKey and signingSecret are required." });
+    return;
+  }
+
+  const log = new RequestLog("POST", "/api/settings");
+  log.step(`publicKey: ${publicKey.slice(0, 14)}…`);
+  log.step(`signingSecret: ${"+".repeat(Math.min(signingSecret.length, 8))} (${signingSecret.length} chars)`);
+
+  activePublicKey     = publicKey;
+  activeSigningSecret = signingSecret;
+
+  log.done("SDK keys updated in memory ✓", true);
+  res.status(200).json({ success: true, message: "SDK keys updated successfully.", activePublicKey });
 });
 
 // ── GET /api/logs ─────────────────────────────────────────────────────────────
@@ -226,8 +256,8 @@ app.get("/api/logs", (_req: Request, res: Response) => {
 
 // ── Startup banner ────────────────────────────────────────────────────────────
 function printBanner() {
-  const pkShort  = EVENT_PUBLIC_KEY  ? EVENT_PUBLIC_KEY.slice(0, 14) + "…"  : "(not set — add to .env)";
-  const secOk    = EVENT_SIGNING_SECRET ? "✓ set" : "✗ not set — HMAC will fail";
+  const pkShort  = activePublicKey     ? activePublicKey.slice(0, 14) + "…"     : "(not set — use /api/settings)";
+  const secOk    = activeSigningSecret ? "✓ set" : "✗ not set — use /api/settings";
 
   const lines = [
     "  FlashEngine Demo Server",
