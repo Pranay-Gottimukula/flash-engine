@@ -26,7 +26,8 @@ export default function SettingsPage() {
   const load = useCallback(() => {
     setLoading(true);
     setError('');
-    api.get<ClientProfile>('/api/auth/me')
+    api.get<{ client: ClientProfile }>('/api/auth/me')
+      .then(r => r.client)
       .then(setProfile)
       .catch(err => setError(toErrorMessage(err)))
       .finally(() => setLoading(false));

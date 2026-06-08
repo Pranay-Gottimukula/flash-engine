@@ -23,7 +23,7 @@ export async function requireAuth(
     return;
   }
 
-  const client = await prisma.client.findUnique({
+  const client = await prisma.appClient.findUnique({
     where:  { id: sub },
     select: { id: true, email: true, name: true, role: true, publicKey: true, suspended: true },
   });

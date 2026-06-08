@@ -40,7 +40,7 @@ export async function signup(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const existing = await prisma.client.findUnique({ where: { email } });
+  const existing = await prisma.appClient.findUnique({ where: { email } });
   if (existing) {
     res.status(409).json({ error: 'Email already registered' });
     return;
@@ -49,7 +49,7 @@ export async function signup(req: Request, res: Response): Promise<void> {
   const passwordHash = await bcrypt.hash(password, 12);
   const publicKey    = crypto.randomUUID();
 
-  const client = await prisma.client.create({
+  const client = await prisma.appClient.create({
     data: { email, passwordHash, publicKey, role: 'CLIENT', name: name ?? null },
     select: { id: true, email: true, name: true, role: true, publicKey: true, createdAt: true },
   });
@@ -69,7 +69,7 @@ export async function login(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const client = await prisma.client.findUnique({
+  const client = await prisma.appClient.findUnique({
     where:  { email },
     select: { id: true, email: true, name: true, role: true, publicKey: true,
               createdAt: true, passwordHash: true, suspended: true },
@@ -106,7 +106,7 @@ export async function getMe(req: Request, res: Response): Promise<void> {
 
   const token = authHeader.slice(7);
 
-  let payload: { sub: string };
+  let payload: any; // Use any or a looser type here since we validate it below
   try {
     payload = verifyAuthToken(token);
   } catch {
@@ -114,7 +114,13 @@ export async function getMe(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const client = await prisma.client.findUnique({
+  // ADD THIS GUARD CLAUSE
+  if (!payload || typeof payload.sub !== 'string') {
+    res.status(401).json({ error: 'Invalid token payload: missing subject identifier' });
+    return;
+  }
+
+  const client = await prisma.appClient.findUnique({
     where:  { id: payload.sub },
     select: { id: true, email: true, name: true, role: true,
               publicKey: true, createdAt: true, suspended: true },

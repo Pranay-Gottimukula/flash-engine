@@ -75,7 +75,7 @@ export default function AdminClientsPage() {
     setActing(true);
     const { client, action } = pending;
     try {
-      await api.post(`/api/superadmin/clients/${client.id}/${action}`);
+      await api.put(`/api/superadmin/clients/${client.id}/${action}`);
       toast.success(
         action === 'suspend'
           ? `${client.email} suspended`

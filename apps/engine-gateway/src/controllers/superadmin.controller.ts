@@ -22,7 +22,7 @@ function formatUptime(seconds: number): string {
 
 export async function listClients(req: Request, res: Response): Promise<void> {
   const [clients, activeEventCounts, rawTotalUsers] = await Promise.all([
-    prisma.client.findMany({
+    prisma.appClient.findMany({
       orderBy: { createdAt: 'desc' },
       select: {
         id:        true,
@@ -77,13 +77,13 @@ export async function listClients(req: Request, res: Response): Promise<void> {
 export async function suspendClient(req: Request<{ id: string }>, res: Response): Promise<void> {
   const { id } = req.params;
 
-  const client = await prisma.client.findUnique({ where: { id }, select: { id: true } });
+  const client = await prisma.appClient.findUnique({ where: { id }, select: { id: true } });
   if (!client) {
     res.status(404).json({ error: 'Client not found' });
     return;
   }
 
-  await prisma.client.update({
+  await prisma.appClient.update({
     where: { id },
     data:  { suspended: true },
   });
@@ -106,13 +106,13 @@ export async function suspendClient(req: Request<{ id: string }>, res: Response)
 export async function unsuspendClient(req: Request<{ id: string }>, res: Response): Promise<void> {
   const { id } = req.params;
 
-  const client = await prisma.client.findUnique({ where: { id }, select: { id: true } });
+  const client = await prisma.appClient.findUnique({ where: { id }, select: { id: true } });
   if (!client) {
     res.status(404).json({ error: 'Client not found' });
     return;
   }
 
-  await prisma.client.update({
+  await prisma.appClient.update({
     where: { id },
     data:  { suspended: false },
   });
@@ -169,36 +169,59 @@ export async function getSystemHealth(_req: Request, res: Response): Promise<voi
 export async function getPlatformOverview(_req: Request, res: Response): Promise<void> {
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-  const [
-    totalClients,
-    totalEvents,
-    activeCount,
-    pausedCount,
-    pendingCount,
-    endedCount,
-    activeEvents,
-    eventsCreated24h,
-    attempts24h,
-  ] = await Promise.all([
-    prisma.client.count(),
-    prisma.saleEvent.count(),
-    prisma.saleEvent.count({ where: { status: 'ACTIVE' } }),
-    prisma.saleEvent.count({ where: { status: 'PAUSED' } }),
-    prisma.saleEvent.count({ where: { status: 'PENDING' } }),
-    prisma.saleEvent.count({ where: { status: 'ENDED' } }),
-    prisma.saleEvent.findMany({
-      where:  { status: 'ACTIVE' },
-      select: { publicKey: true, rateLimit: true },
-    }),
-    prisma.saleEvent.count({ where: { createdAt: { gte: since24h } } }),
-    prisma.queueAttempt.groupBy({
-      by:    ['result'],
-      where: { createdAt: { gte: since24h } },
-      _count: { _all: true },
-    }),
+  // Single $queryRaw replaces ALL prisma queries — 1 connection total.
+  type OverviewRow = {
+    totalClients:     bigint;
+    totalEvents:      bigint;
+    activeCount:      bigint;
+    pausedCount:      bigint;
+    pendingCount:     bigint;
+    endedCount:       bigint;
+    eventsCreated24h: bigint;
+    attempts24h_won:          bigint;
+    attempts24h_sold_out:     bigint;
+    attempts24h_queued:       bigint;
+    attempts24h_rate_limited: bigint;
+    attempts24h_total:        bigint;
+  };
+
+  type ActiveEventRow = {
+    publicKey: string;
+    rateLimit: number;
+  };
+
+  const [overviewRows, activeEvents] = await Promise.all([
+    prisma.$queryRaw<OverviewRow[]>`
+      SELECT
+        (SELECT COUNT(*) FROM "Client")                                        AS "totalClients",
+        COUNT(*)                                                                AS "totalEvents",
+        COUNT(*) FILTER (WHERE status = 'ACTIVE')                              AS "activeCount",
+        COUNT(*) FILTER (WHERE status = 'PAUSED')                              AS "pausedCount",
+        COUNT(*) FILTER (WHERE status = 'PENDING')                             AS "pendingCount",
+        COUNT(*) FILTER (WHERE status = 'ENDED')                               AS "endedCount",
+        COUNT(*) FILTER (WHERE "createdAt" >= ${since24h})                     AS "eventsCreated24h",
+        (SELECT COUNT(*) FROM "QueueAttempt"
+          WHERE "createdAt" >= ${since24h} AND result = 'WON')                 AS "attempts24h_won",
+        (SELECT COUNT(*) FROM "QueueAttempt"
+          WHERE "createdAt" >= ${since24h} AND result = 'SOLD_OUT')            AS "attempts24h_sold_out",
+        (SELECT COUNT(*) FROM "QueueAttempt"
+          WHERE "createdAt" >= ${since24h} AND result = 'QUEUED')              AS "attempts24h_queued",
+        (SELECT COUNT(*) FROM "QueueAttempt"
+          WHERE "createdAt" >= ${since24h} AND result = 'RATE_LIMITED')        AS "attempts24h_rate_limited",
+        (SELECT COUNT(*) FROM "QueueAttempt"
+          WHERE "createdAt" >= ${since24h})                                    AS "attempts24h_total"
+      FROM "SaleEvent"
+    `,
+    prisma.$queryRaw<ActiveEventRow[]>`
+      SELECT "publicKey", "rateLimit"
+      FROM "SaleEvent"
+      WHERE status = 'ACTIVE'
+    `,
   ]);
 
-  // Fetch queue depth + stock for every active event in one pipeline
+  const counts = overviewRows[0];
+
+  // Redis pipeline — no Postgres connections involved
   const pipeline = redis.pipeline();
   for (const e of activeEvents) {
     const { eventKey, queueKey } = getRedisKeys(e.publicKey);
@@ -207,41 +230,40 @@ export async function getPlatformOverview(_req: Request, res: Response): Promise
   }
   const pipelineResults = (await pipeline.exec()) ?? [];
 
-  let totalUsersInQueue    = 0;
-  let totalStockRemaining  = 0;
+  let totalUsersInQueue      = 0;
+  let totalStockRemaining    = 0;
   let totalRateLimitCapacity = 0;
 
   for (let i = 0; i < activeEvents.length; i++) {
-    const queueDepth = (pipelineResults[i * 2]?.[1]   as number | null) ?? 0;
+    const queueDepth = (pipelineResults[i * 2]?.[1]     as number | null) ?? 0;
     const stockStr   = (pipelineResults[i * 2 + 1]?.[1] as string | null);
-    totalUsersInQueue     += Number(queueDepth);
-    totalStockRemaining   += stockStr !== null ? parseInt(stockStr, 10) : 0;
-    totalRateLimitCapacity += activeEvents[i].rateLimit;
-  }
-
-  const resultMap: Record<string, number> = {};
-  let totalRequests = 0;
-  for (const row of attempts24h) {
-    resultMap[row.result] = row._count._all;
-    totalRequests        += row._count._all;
+    totalUsersInQueue      += Number(queueDepth);
+    totalStockRemaining    += stockStr !== null ? parseInt(stockStr, 10) : 0;
+    totalRateLimitCapacity += Number(activeEvents[i].rateLimit);
   }
 
   res.status(200).json({
-    clients: { total: totalClients },
-    events:  { total: totalEvents, active: activeCount, paused: pausedCount, pending: pendingCount, ended: endedCount },
+    clients: { total: Number(counts.totalClients) },
+    events: {
+      total:   Number(counts.totalEvents),
+      active:  Number(counts.activeCount),
+      paused:  Number(counts.pausedCount),
+      pending: Number(counts.pendingCount),
+      ended:   Number(counts.endedCount),
+    },
     live: {
       totalUsersInQueue,
       totalStockRemaining,
       totalRateLimitCapacity,
     },
     last24h: {
-      eventsCreated: eventsCreated24h,
-      totalRequests,
+      eventsCreated: Number(counts.eventsCreated24h),
+      totalRequests: Number(counts.attempts24h_total),
       results: {
-        WON:          resultMap['WON']          ?? 0,
-        SOLD_OUT:     resultMap['SOLD_OUT']     ?? 0,
-        QUEUED:       resultMap['QUEUED']       ?? 0,
-        RATE_LIMITED: resultMap['RATE_LIMITED'] ?? 0,
+        WON:          Number(counts.attempts24h_won),
+        SOLD_OUT:     Number(counts.attempts24h_sold_out),
+        QUEUED:       Number(counts.attempts24h_queued),
+        RATE_LIMITED: Number(counts.attempts24h_rate_limited),
       },
     },
     timestamp: new Date().toISOString(),

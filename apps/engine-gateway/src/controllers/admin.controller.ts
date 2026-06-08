@@ -327,7 +327,10 @@ export async function listEvents(req: Request, res: Response): Promise<void> {
       mode:                       true,
       createdAt:                  true,
       client: { select: { email: true } },
-      _count: { select: { attempts: true, releases: true, usedJtis: true } },
+      // NOTE: _count on multiple relations (attempts, releases, usedJtis) causes
+      // Prisma to fire 3 extra parallel COUNT queries — one per relation — each
+      // consuming a pool connection. The list page doesn't display these counts,
+      // so they are fetched only on the event detail page (/events/:id/stats).
     },
   });
 
@@ -358,7 +361,6 @@ export async function listEvents(req: Request, res: Response): Promise<void> {
       publicKey:                  e.publicKey,
       rsaPublicKey:               e.rsaPublicKey,
       createdAt:                  e.createdAt,
-      _count:                     e._count,
       ...(isSuperAdmin ? { clientEmail: e.client.email } : {}),
     }))
   );

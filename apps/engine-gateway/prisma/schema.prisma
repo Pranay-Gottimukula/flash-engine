@@ -4,8 +4,7 @@
 // Get a free hosted Postgres database in seconds: `npx create-db`
 
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["driverAdapters"]
+  provider = "prisma-client-js"
   // output   = "../node_modules/.prisma/client"
 }
 
@@ -13,7 +12,7 @@ datasource db {
   provider = "postgresql"
 }
 
-model Client {
+model AppClient {
   id           String      @id @default(cuid())
   email        String      @unique
   passwordHash String
@@ -23,6 +22,8 @@ model Client {
   name         String?
   createdAt    DateTime    @default(now())
   events       SaleEvent[]
+
+  @@map("Client")
 }
 
 model SaleEvent {
@@ -51,7 +52,7 @@ model SaleEvent {
   endedAt      DateTime?
   createdAt    DateTime @default(now())
 
-  client    Client          @relation(fields: [clientId], references: [id])
+  client    AppClient       @relation(fields: [clientId], references: [id])
   attempts  QueueAttempt[]
   releases  TicketRelease[]
   usedJtis  UsedJti[]

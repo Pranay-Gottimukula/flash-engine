@@ -5,38 +5,37 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// 1. Grab your connection string
 const connectionString = process.env.DATABASE_URL;
-
 if (!connectionString) {
   throw new Error("DATABASE_URL environment variable is missing!");
 }
 
-// // 2. Setup the standard Postgres connection pool
-// const pool = new Pool({ connectionString });
+type PrismaClientSingleton = ReturnType<typeof createPrismaClient>;
 
-// // 3. Initialize the Prisma adapter with the pool
-// const adapter = new PrismaPg(pool);
+const globalForPrisma = globalThis as unknown as {
+  prisma?: PrismaClientSingleton;
+  pool?: Pool;
+};
 
-let _pool: Pool | undefined;
+function createPrismaClient() {
+  globalForPrisma.pool = new Pool({
+    connectionString,
+    max:                     3,   // Neon free = 10 total; leave headroom
+    idleTimeoutMillis:       5_000,
+    connectionTimeoutMillis: 10_000,
+    keepAlive:               false,
+    ssl:                     { rejectUnauthorized: false },
+  });
 
-const prismaClientSingleton = () => {
-  _pool = new Pool({ connectionString });
-  const adapter = new PrismaPg(_pool);
+  const adapter = new PrismaPg(globalForPrisma.pool);
 
   return new PrismaClient({
     adapter,
-    log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
-};
+}
 
-type PrismaClientSingleton = ReturnType<typeof prismaClientSingleton>;
-
-// Global singleton — prevents multiple connections during hot-reload in dev
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClientSingleton };
-
-// 4. Inject the adapter into the PrismaClient constructor
-export const prisma = globalForPrisma.prisma ?? prismaClientSingleton();
+export const prisma = globalForPrisma.prisma ?? createPrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
@@ -44,9 +43,9 @@ if (process.env.NODE_ENV !== "production") {
 
 export function getPoolStats() {
   return {
-    total:   _pool?.totalCount   ?? 0,
-    idle:    _pool?.idleCount    ?? 0,
-    waiting: _pool?.waitingCount ?? 0,
+    total:   globalForPrisma.pool?.totalCount   ?? 0,
+    idle:    globalForPrisma.pool?.idleCount     ?? 0,
+    waiting: globalForPrisma.pool?.waitingCount  ?? 0,
   };
 }
 
