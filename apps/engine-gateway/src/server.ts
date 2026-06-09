@@ -2,10 +2,11 @@
 import express from 'express';
 import cors    from 'cors';
 import dotenv  from 'dotenv';
-import path    from 'path';
+// import path    from 'path';
 
 // override: true ensures .env always wins over any shell-exported vars (e.g. stale Neon DATABASE_URL)
-dotenv.config({ path: path.resolve(__dirname, '../.env'), override: true });
+// dotenv.config({ path: path.resolve(__dirname, '../.env'), override: true });
+dotenv.config();
 
 import prisma                        from './lib/prisma';
 import redis, { connectRedis }       from './services/redis.service';
