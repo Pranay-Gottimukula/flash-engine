@@ -648,9 +648,8 @@ export default function DemoPage() {
                 label="Number of Users"
                 type="number"
                 min={5}
-                max={500}
                 value={numUsers}
-                onChange={e => setNumUsers(Math.min(500, Math.max(5, Number(e.target.value))))}
+                onChange={e => setNumUsers(Math.max(5, Number(e.target.value)))}
                 disabled={running}
               />
               <Input
