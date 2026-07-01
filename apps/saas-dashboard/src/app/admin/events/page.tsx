@@ -131,8 +131,8 @@ export default function AdminEventsPage() {
       label: 'Stock',
       render: (_, row) =>
         row.status === 'ACTIVE'
-          ? `${row.stockRemaining.toLocaleString()}/${row.stockCount.toLocaleString()}`
-          : row.stockCount.toLocaleString(),
+          ? `${(row.stockRemaining ?? 0).toLocaleString()}/${(row.stockCount ?? 0).toLocaleString()}`
+          : (row.stockCount ?? 0).toLocaleString(),
     },
     {
       key:      'rateLimit',

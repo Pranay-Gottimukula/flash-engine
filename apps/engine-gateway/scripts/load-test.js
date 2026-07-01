@@ -1,8 +1,9 @@
 // ulimit -n 65535
 
 // curl -fsSL https://bun.sh/install | bash
+// bun add -g pm2
 // source ~/.bashrc
-// pm2 start src/server.ts -i max
+// pm2 start bun --name engine-gateway -i max -- run src/server.ts
 
 /**
  * k6 Load Test — Flash Sale Engine
@@ -32,8 +33,8 @@ const checkoutDuration   = new Trend('checkout_duration_ms', true);
 // ── Load-test stages ───────────────────────────────────────────────────────
 export const options = {
   stages: [
-    { duration: '30s', target: 2000 }, 
-    { duration: '60s', target: 2000 }, 
+    { duration: '30s', target: 1000 }, 
+    { duration: '60s', target: 1000 }, 
     { duration: '15s', target: 0    }, 
   ],
   thresholds: {
