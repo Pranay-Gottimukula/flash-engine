@@ -8,9 +8,9 @@ B2B queue infrastructure that protects e-commerce backends from crashes during h
 
 Standard architectures fail under flash sale traffic because:
 
-- **Connection pool exhaustion** — Postgres has ~20 connections. 10,000 concurrent users destroy it instantly.
-- **TOCTOU race conditions** — Two users read `stock = 1`, both pass the check, both decrement. Stock goes negative. You've oversold.
-- **Database lock contention** — Concurrent `UPDATE` statements queue up, latency spikes, server crashes.
+- **Connection pool exhaustion**: Postgres has ~20 connections. 10,000 concurrent users destroy it instantly.
+- **TOCTOU race conditions**: Two users read `stock = 1`, both pass the check, both decrement. Stock goes negative. You've oversold.
+- **Database lock contention**: Concurrent `UPDATE` statements queue up, latency spikes, server crashes.
 
 ---
 
@@ -18,27 +18,27 @@ Standard architectures fail under flash sale traffic because:
 
 A two-layer defense:
 
-1. **Redis Lua Bouncer** — An atomic Lua script runs entirely inside Redis (single thread, no network round-trips). It checks stock, applies a leaky bucket rate limit, and decrements — all in one microsecond. Losers are rejected before touching Node.js or Postgres.
+1. **Redis Lua Bouncer**: An atomic Lua script runs entirely inside Redis (single thread, no network round-trips). It checks stock, applies a leaky bucket rate limit, and decrements all in one microsecond. Losers are rejected before touching Node.js or Postgres.
 
-2. **RS256 Cryptographic Tickets** — Winners receive a signed JWT (15-minute expiry, unique `jti`). The client's backend verifies the signature locally and INSERTs the `jti` as a primary key — the database constraint itself prevents double-spend. No distributed lock needed.
+2. **RS256 Cryptographic Tickets**: Winners receive a signed JWT (15-minute expiry, unique `jti`). The client's backend verifies the signature locally and INSERTs the `jti` as a primary key, the database constraint itself prevents double-spend. No distributed lock needed.
 
 ---
 
 ## Demo Videos
 
-**1. Platform Overview**
-[client-view.webm](https://github.com/user-attachments/assets/1097eabd-892a-420f-8b25-ab4eda686e49)
-[admin-view.webm](https://github.com/user-attachments/assets/8bd7e2d7-d6b5-4368-aa81-ea8d02c09692)
-[event-creation.webm](https://github.com/user-attachments/assets/cdde90db-b96a-4b67-aab6-c6df4f97a29c)
+**1. Platform Overview**:
+[client-view.webm](https://github.com/user-attachments/assets/1097eabd-892a-420f-8b25-ab4eda686e49) ; 
+[admin-view.webm](https://github.com/user-attachments/assets/8bd7e2d7-d6b5-4368-aa81-ea8d02c09692) ; 
+[event-creation.webm](https://github.com/user-attachments/assets/cdde90db-b96a-4b67-aab6-c6df4f97a29c) ; 
 Shows the SaaS dashboard (super admin creating events, generating API keys) and the client-facing view.
 
-**2. Traffic Simulator — Queue Visualisation**
-[queue-demo.webm](https://github.com/user-attachments/assets/f1084edd-b52b-4867-b73e-f6ce23f1702e)
+**2. Traffic Simulator, Queue Visualisation**:
+[queue-demo.webm](https://github.com/user-attachments/assets/f1084edd-b52b-4867-b73e-f6ce23f1702e) ; 
 Small-scale demo showing the queue in action with live visualisation of users joining, winning, and being rate-limited.
 
-**3. Demo Storefront — Integration in Action**
-[buy-and-double-spend.webm](https://github.com/user-attachments/assets/1c8a4bff-bcc0-4e9f-bcea-635f121edc46)
-[payment-failure.webm](https://github.com/user-attachments/assets/265d3a52-a8fc-4c87-84ba-6e5da5c5873d)
+**3. Demo Storefront, Integration in Action**:
+[buy-and-double-spend.webm](https://github.com/user-attachments/assets/1c8a4bff-bcc0-4e9f-bcea-635f121edc46) ; 
+[payment-failure.webm](https://github.com/user-attachments/assets/265d3a52-a8fc-4c87-84ba-6e5da5c5873d) ; 
 End-to-end flow in a real store: user joins queue → receives ticket → checkout verifies token → simulate payment failure → stock released back to pool.
 
 ---
@@ -47,21 +47,7 @@ End-to-end flow in a real store: user joins queue → receives ticket → checko
 
 Tests run with [k6](https://k6.io/) on a single AMD Ryzen 5 machine. Server clustered with `pm2 start src/server.ts -i max`. File descriptors raised to 65,535.
 
-### Phase 1 — Bouncer (Deflection Test)
-
-> Records not available
-
-| Config | Result |
-|---|---|
-| 2,000 concurrent virtual users | ✅ Zero database crashes |
-| 800 items in stock | Sold out in seconds |
-| Requests deflected | 57,000+ in 60 seconds |
-| Rejection rate | ~1,000/sec |
-| Postgres queries during deflection | **0** |
-
-The Redis Lua script rejected excess traffic at O(1) without ever touching Node.js heavy processing or the database.
-
-### Phase 2 — Deep Stock (Sustained Throughput Test)
+### Deep Stock (Sustained Throughput Test)
 
 <img width="1770" height="781" alt="stresstestmetric2" src="https://github.com/user-attachments/assets/962ac752-a6c2-454c-89de-06f7846b8298" />
 <img width="1764" height="791" alt="stresstestmtrics1" src="https://github.com/user-attachments/assets/77cd9079-ec8e-4f9d-bbbc-daaf003e2f21" />
@@ -146,9 +132,9 @@ Redis         → Queue state, leaky bucket, stock counter
 **1. Get keys from the dashboard**
 
 After creating a flash sale event, the dashboard gives you:
-- `publicKey` — safe to use in frontend code
-- `signingSecret` — server-side only, for release route HMAC
-- `rsaPublicKey` — for local JWT verification (or fetch from JWKS endpoint)
+- `publicKey`: safe to use in frontend code
+- `signingSecret`: server-side only, for release route HMAC
+- `rsaPublicKey`: for local JWT verification (or fetch from JWKS endpoint)
 
 **2. Frontend — join the queue**
 
