@@ -27,18 +27,18 @@ A two-layer defense:
 ## Demo Videos
 
 **1. Platform Overview**
-[clientview.webm](https://github.com/user-attachments/assets/1097eabd-892a-420f-8b25-ab4eda686e49)
-[admin-overview.webm](https://github.com/user-attachments/assets/8bd7e2d7-d6b5-4368-aa81-ea8d02c09692)
-[detailedevent.webm](https://github.com/user-attachments/assets/cdde90db-b96a-4b67-aab6-c6df4f97a29c)
+[client-view.webm](https://github.com/user-attachments/assets/1097eabd-892a-420f-8b25-ab4eda686e49)
+[admin-view.webm](https://github.com/user-attachments/assets/8bd7e2d7-d6b5-4368-aa81-ea8d02c09692)
+[event-creation.webm](https://github.com/user-attachments/assets/cdde90db-b96a-4b67-aab6-c6df4f97a29c)
 Shows the SaaS dashboard (super admin creating events, generating API keys) and the client-facing view.
 
 **2. Traffic Simulator — Queue Visualisation**
-[queuedemo.webm](https://github.com/user-attachments/assets/f1084edd-b52b-4867-b73e-f6ce23f1702e)
+[queue-demo.webm](https://github.com/user-attachments/assets/f1084edd-b52b-4867-b73e-f6ce23f1702e)
 Small-scale demo showing the queue in action with live visualisation of users joining, winning, and being rate-limited.
 
 **3. Demo Storefront — Integration in Action**
-[buyanddoubleprevent.webm](https://github.com/user-attachments/assets/1c8a4bff-bcc0-4e9f-bcea-635f121edc46)
-[paymentfailure.webm](https://github.com/user-attachments/assets/265d3a52-a8fc-4c87-84ba-6e5da5c5873d)
+[buy-and-double-spend.webm](https://github.com/user-attachments/assets/1c8a4bff-bcc0-4e9f-bcea-635f121edc46)
+[payment-failure.webm](https://github.com/user-attachments/assets/265d3a52-a8fc-4c87-84ba-6e5da5c5873d)
 End-to-end flow in a real store: user joins queue → receives ticket → checkout verifies token → simulate payment failure → stock released back to pool.
 
 ---
