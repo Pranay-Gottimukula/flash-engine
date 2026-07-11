@@ -78,7 +78,7 @@ model QueueAttempt {
 
 // Audit log of every stock release (expired ticket, user cancelled)
 model TicketRelease {
-  id          String   @id @default(cuid())
+  id          String   @id @default(cuid()) @unique
   saleEventId String
   jti         String   // which ticket was returned
   reason      String   // EXPIRED | CANCELLED | PAYMENT_FAILED

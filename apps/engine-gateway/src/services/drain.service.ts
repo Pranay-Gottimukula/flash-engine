@@ -200,8 +200,8 @@ async function processWinner(
     });
   }
 
-  // DO NOT AWAIT — Postgres write must never block the drain loop.
-  prisma.queueAttempt.create({
+  // Await for WON
+  await prisma.queueAttempt.create({
     data: { saleEventId: eventData.eventId, userId, result: 'WON', jti },
   }).catch(err => console.error('[drain/audit] QueueAttempt WON failed:', err));
 }
