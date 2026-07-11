@@ -66,7 +66,10 @@ const globalForRedis = globalThis as unknown as { redis?: Redis }
 const redis = globalForRedis.redis ?? new Redis(REDIS_URL, {
   retryStrategy: (times: number) => Math.min(times * 200, 30_000),
   lazyConnect: true,
-  tls: { rejectUnauthorized: false },
+  // Only enable TLS for rediss:// connections (e.g. Upstash, Redis Cloud)
+  // Plain redis:// (local Docker) must NOT have tls set, or ioredis will
+  // attempt a TLS handshake and time out.
+  ...(REDIS_URL.startsWith('rediss://') ? { tls: { rejectUnauthorized: false } } : {}),
 });
 
 
